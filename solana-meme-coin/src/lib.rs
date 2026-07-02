@@ -29,8 +29,12 @@ pub mod solana_meme_coin {
         vesting::release_vesting(ctx)
     }
 
-    pub fn trigger_volatility_delay(ctx: Context<TriggerVolatilityDelay>) -> Result<()> {
-        vesting::trigger_volatility_delay(ctx)
+    pub fn record_price_snapshot(ctx: Context<RecordPriceSnapshot>) -> Result<()> {
+        vesting::record_price_snapshot(ctx)
+    }
+
+    pub fn check_and_trigger_volatility_delay(ctx: Context<CheckVolatilityDelay>) -> Result<()> {
+        vesting::check_and_trigger_volatility_delay(ctx)
     }
 
     // ========================================
@@ -55,12 +59,20 @@ pub mod solana_meme_coin {
         presale::initialize_presale(ctx)
     }
 
+    pub fn activate_tge(ctx: Context<ActivateTGE>) -> Result<()> {
+        presale::activate_tge(ctx)
+    }
+
     pub fn buy_tokens(ctx: Context<BuyTokens>, amount_sol: u64) -> Result<()> {
         presale::buy_tokens(ctx, amount_sol)
     }
 
     pub fn claim_tge(ctx: Context<ClaimTGE>) -> Result<()> {
         presale::claim_tge(ctx)
+    }
+
+    pub fn finalize_investor_vesting(ctx: Context<FinalizeInvestorVesting>) -> Result<()> {
+        presale::finalize_investor_vesting(ctx)
     }
 }
 

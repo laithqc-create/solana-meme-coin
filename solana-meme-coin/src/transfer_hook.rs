@@ -1,57 +1,230 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::sysvar::instructions::{
+    load_current_index_checked, load_instruction_at_checked,
+};
+use anchor_spl::token_2022::spl_token_2022::extension::transfer_hook::TransferHookAccount;
+use spl_tlv_account_resolution::{
+    account::ExtraAccountMeta, seeds::Seed, state::ExtraAccountMetaList,
+};
+use spl_transfer_hook_interface::instruction::ExecuteInstruction;
+
+/// IMPORTANT ARCHITECTURE NOTE (read before touching this file):
+///
+/// Token-2022's Transfer Hook extension calls this program's `execute`
+/// via CPI *during* an in-flight transfer of this same mint. At that
+/// point the source token account is flagged mid-transfer, and the
+/// SPL Token-2022 program will REJECT any nested transfer of the same
+/// mint attempted from inside this hook (reentrancy guard). That means
+/// this hook cannot itself CPI the 1% fee to the marketing wallet —
+/// there is no way to "siphon" part of the transferred amount from here.
+///
+/// The enforceable pattern instead is: require a SIBLING instruction,
+/// in the same transaction, that pays the fee explicitly. The
+/// swap-ui / router is responsible for building that fee-payment
+/// instruction alongside the swap when the trade route touches the
+/// known DEX pool. This hook's job is only to verify that sibling
+/// instruction exists and is correct — and to reject the whole
+/// transaction if it's missing, which prevents anyone from stripping
+/// the fee instruction out client-side.
+///
+/// P2P wallet-to-wallet transfers (neither side is the known pool)
+/// have no fee-instruction requirement and pass straight through.
+
+pub const TAX_BPS: u64 = 100; // 1%
+pub const TAX_BPS_DENOMINATOR: u64 = 10_000;
 
 pub fn initialize_extra_account_meta_list(
-    _ctx: Context<InitializeExtraAccountMetaList>,
+    ctx: Context<InitializeExtraAccountMetaList>,
 ) -> Result<()> {
-    // Logic to initialize ExtraAccountMetaList for TransferHook
-    // This allows passing the Marketing wallet and AMM pool addresses
+    // Declares the extra accounts (beyond the standard 4 SPL-Token
+    // transfer accounts) that Token-2022 must resolve and pass into
+    // `execute` on every transfer of this mint: the dex pool address
+    // and marketing wallet, plus the Instructions sysvar itself so
+    // we can inspect sibling instructions.
+    let account_metas = vec![
+        ExtraAccountMeta::new_with_pubkey(&ctx.accounts.dex_pool.key(), false, false)?,
+        ExtraAccountMeta::new_with_pubkey(&ctx.accounts.marketing_wallet.key(), false, true)?,
+        ExtraAccountMeta::new_with_pubkey(
+            &anchor_lang::solana_program::sysvar::instructions::ID,
+            false,
+            false,
+        )?,
+    ];
+
+    let account_size = ExtraAccountMetaList::size_of(account_metas.len())? as u64;
+    ctx.accounts
+        .extra_account_meta_list
+        .to_account_info()
+        .realloc(account_size as usize, false)?;
+
+    ExtraAccountMetaList::init::<ExecuteInstruction>(
+        &mut ctx.accounts.extra_account_meta_list.try_borrow_mut_data()?,
+        &account_metas,
+    )?;
+
     Ok(())
 }
 
 pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
-    // Logic to enforce 1% tax on DEX interactions
-    let source = &ctx.accounts.source;
-    let destination = &ctx.accounts.destination;
-    
-    // In production, you would verify against a known list of AMM pool PDAs.
-    // Here we check a mock DEX address (could be passed in extra_account_meta_list)
-    let is_dex_trade = source.key() == ctx.accounts.dex_pool.key() 
-                    || destination.key() == ctx.accounts.dex_pool.key();
+    // Token-2022 sets this flag on both token accounts while a hook-
+    // gated transfer is in flight. We don't rely on it for logic here,
+    // but asserting it's set is a cheap sanity check that we're really
+    // being invoked as a hook and not called directly by a spoofed
+    // instruction pretending to be the token program.
+    let source_data = ctx.accounts.source.try_borrow_data()?;
+    let source_ext = anchor_spl::token_2022::spl_token_2022::extension::StateWithExtensions::<
+        anchor_spl::token_2022::spl_token_2022::state::Account,
+    >::unpack(&source_data)?;
+    let hook_flag = source_ext.get_extension::<TransferHookAccount>()?;
+    require!(bool::from(hook_flag.transferring), TransferHookError::NotInTransfer);
+    drop(source_data);
 
-    if is_dex_trade {
-        let tax_amount = amount / 100; // 1% tax
-        
-        // This is a simplified CPI mock. In a real Token-2022 hook,
-        // you invoke transfer_checked from the sender to the marketing wallet.
-        msg!("DEX trade detected. Enforcing 1% tax: {}", tax_amount);
-        // require!(tax_amount > 0, ErrorCode::TaxTooLow);
-    } else {
-        msg!("P2P trade detected. 0% tax applied.");
+    let is_dex_trade = ctx.accounts.source.key() == ctx.accounts.dex_pool.key()
+        || ctx.accounts.destination.key() == ctx.accounts.dex_pool.key();
+
+    if !is_dex_trade {
+        msg!("P2P transfer detected — no tax required.");
+        return Ok(());
     }
-    
+
+    let required_fee = (amount as u128)
+        .checked_mul(TAX_BPS as u128)
+        .ok_or(TransferHookError::MathOverflow)?
+        .checked_div(TAX_BPS_DENOMINATOR as u128)
+        .ok_or(TransferHookError::MathOverflow)? as u64;
+
+    // required_fee can legitimately be 0 for dust-sized transfers;
+    // in that case there's nothing to enforce.
+    if required_fee == 0 {
+        return Ok(());
+    }
+
+    verify_sibling_fee_instruction(&ctx, required_fee)?;
+
+    msg!(
+        "DEX trade verified: {} lamports transferred, {} lamports fee confirmed in sibling instruction.",
+        amount,
+        required_fee
+    );
+
     Ok(())
+}
+
+/// Scans every other instruction in the current transaction (via the
+/// Instructions sysvar) looking for an SPL-Token-2022 TransferChecked
+/// instruction that pays at least `required_fee` of this same mint
+/// into the marketing wallet. Fails the whole transaction if none is
+/// found, which is what actually enforces the tax — Token-2022 will
+/// unwind the entire transfer if this hook returns an error.
+fn verify_sibling_fee_instruction(ctx: &Context<TransferHook>, required_fee: u64) -> Result<()> {
+    let ix_sysvar = &ctx.accounts.instructions_sysvar;
+    let current_index = load_current_index_checked(ix_sysvar)?;
+
+    let token_2022_program_id = ctx.accounts.mint.owner;
+    let marketing_wallet_key = ctx.accounts.marketing_wallet.key();
+
+    let mut i: u16 = 0;
+    loop {
+        let ix = match load_instruction_at_checked(i as usize, ix_sysvar) {
+            Ok(ix) => ix,
+            Err(_) => break, // reached end of instruction list
+        };
+
+        if i != current_index
+            && ix.program_id == *token_2022_program_id
+            && !ix.data.is_empty()
+        {
+            // TransferChecked discriminator = 12 (spl-token-2022 TokenInstruction enum)
+            const TRANSFER_CHECKED_DISCRIMINATOR: u8 = 12;
+            if ix.data[0] == TRANSFER_CHECKED_DISCRIMINATOR && ix.data.len() >= 9 {
+                let ix_amount = u64::from_le_bytes(ix.data[1..9].try_into().unwrap());
+                let pays_marketing_wallet = ix
+                    .accounts
+                    .iter()
+                    .any(|a| a.pubkey == marketing_wallet_key);
+
+                if pays_marketing_wallet && ix_amount >= required_fee {
+                    return Ok(());
+                }
+            }
+        }
+
+        i += 1;
+        if i > 64 {
+            break; // sane upper bound on instructions scanned per tx
+        }
+    }
+
+    Err(TransferHookError::MissingFeePayment.into())
 }
 
 #[derive(Accounts)]
 pub struct InitializeExtraAccountMetaList<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
+    /// CHECK: PDA owned by this program, seeds validated below
+    #[account(
+        mut,
+        seeds = [b"extra-account-metas", mint.key().as_ref()],
+        bump
+    )]
+    pub extra_account_meta_list: AccountInfo<'info>,
+    /// CHECK: the mint this hook is being attached to
+    pub mint: AccountInfo<'info>,
+    /// CHECK: known AMM pool address (base or quote vault / pool authority)
+    pub dex_pool: AccountInfo<'info>,
+    /// CHECK: destination for collected tax
+    pub marketing_wallet: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
 pub struct TransferHook<'info> {
-    #[account(mut)]
+    /// CHECK: validated via StateWithExtensions unpack in the handler
     pub source: AccountInfo<'info>,
+    /// CHECK: the mint account, `owner` field gives us the token program id
     pub mint: AccountInfo<'info>,
+    /// CHECK: destination token account
     #[account(mut)]
     pub destination: AccountInfo<'info>,
+    /// CHECK: source token account owner
     pub owner: AccountInfo<'info>,
-    /// CHECK: ExtraAccountMetaList PDA
+    /// CHECK: ExtraAccountMetaList PDA, seeds enforced at init time
     pub extra_account_meta_list: AccountInfo<'info>,
-    /// CHECK: DEX Pool Address (passed via extra account meta)
+    /// CHECK: known DEX pool address, passed via extra account meta list
     pub dex_pool: AccountInfo<'info>,
-    /// CHECK: Marketing Wallet (passed via extra account meta)
-    #[account(mut)]
+    /// CHECK: marketing wallet, passed via extra account meta list
     pub marketing_wallet: AccountInfo<'info>,
+    /// CHECK: Instructions sysvar, passed via extra account meta list,
+    /// used to inspect sibling instructions in the same transaction
+    pub instructions_sysvar: AccountInfo<'info>,
+}
+
+#[error_code]
+pub enum TransferHookError {
+    #[msg("Transfer hook invoked outside of an active transfer")]
+    NotInTransfer,
+    #[msg("DEX trade is missing its required sibling fee-payment instruction to the marketing wallet")]
+    MissingFeePayment,
+    #[msg("Math overflow computing required fee")]
+    MathOverflow,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_percent_fee_math() {
+        let amount: u128 = 1_000_000_000; // 1 token @ 9 decimals
+        let fee = amount * TAX_BPS as u128 / TAX_BPS_DENOMINATOR as u128;
+        assert_eq!(fee, 10_000_000); // 1%
+    }
+
+    #[test]
+    fn dust_transfer_rounds_fee_to_zero() {
+        let amount: u128 = 50; // sub-lamport-equivalent dust
+        let fee = amount * TAX_BPS as u128 / TAX_BPS_DENOMINATOR as u128;
+        assert_eq!(fee, 0);
+    }
 }

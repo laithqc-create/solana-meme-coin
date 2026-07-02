@@ -1,10 +1,12 @@
 import { useState, useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
-import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
+import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import { clusterApiUrl } from '@solana/web3.js';
 import { Header } from './components/Header';
 import { SwapWidget } from './components/SwapWidget';
 import { OtcPortal } from './components/OtcPortal';
+import '@solana/wallet-adapter-react-ui/styles.css';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'swap' | 'otc'>('swap');
@@ -12,7 +14,10 @@ function App() {
   // Set up Solana network connection
   const network = clusterApiUrl('devnet');
   const endpoint = import.meta.env.VITE_SOLANA_RPC_URL || network;
-  const wallets = useMemo(() => [], []);
+  const wallets = useMemo(
+    () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
+    []
+  );
 
   return (
     <ConnectionProvider endpoint={endpoint}>
@@ -20,6 +25,9 @@ function App() {
         <WalletModalProvider>
           <div className="app-container">
             <Header />
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+              <WalletMultiButton />
+            </div>
       
       <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '32px' }}>
         <button 
