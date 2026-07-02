@@ -1,0 +1,207 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap');
+@import '@solana/wallet-adapter-react-ui/styles.css';
+
+:root {
+  --bg-dark: #0f1015;
+  --bg-gradient: radial-gradient(circle at top, #1a1c29 0%, #0f1015 100%);
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --primary: #00ffcc;
+  --primary-hover: #00e6b8;
+  --text-main: #ffffff;
+  --text-muted: #8b92a5;
+  --accent-glow: 0 0 20px rgba(0, 255, 204, 0.3);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Outfit', sans-serif;
+  background: var(--bg-gradient);
+  background-attachment: fixed;
+  color: var(--text-main);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+.primary-button {
+  background: var(--primary);
+  color: #000;
+  font-weight: 600;
+  font-size: 1.1rem;
+  padding: 16px 32px;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: var(--accent-glow);
+  width: 100%;
+}
+
+.primary-button:hover {
+  background: var(--primary-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 0 30px rgba(0, 255, 204, 0.5);
+}
+
+.input-field {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--glass-border);
+  color: var(--text-main);
+  padding: 16px;
+  border-radius: 12px;
+  font-size: 1.5rem;
+  width: 100%;
+  font-family: 'Outfit', sans-serif;
+  outline: none;
+  transition: border 0.3s ease;
+}
+
+.input-field:focus {
+  border-color: var(--primary);
+}
+
+/* App Layout */
+.app-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 0;
+  margin-bottom: 60px;
+}
+
+.logo {
+  font-size: 1.8rem;
+  font-weight: 800;
+  background: linear-gradient(90deg, #fff, var(--primary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.wallet-btn {
+  background: var(--glass-bg);
+  color: var(--text-main);
+  border: 1px solid var(--glass-border);
+  padding: 10px 24px;
+  border-radius: 20px;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.wallet-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--primary);
+}
+
+/* Swap Widget */
+.swap-widget-container {
+  max-width: 480px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.swap-widget {
+  padding: 32px;
+  position: relative;
+}
+
+.swap-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.swap-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.swap-input-group {
+  margin-bottom: 16px;
+  position: relative;
+}
+
+.token-label {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  display: block;
+}
+
+.swap-divider {
+  display: flex;
+  justify-content: center;
+  margin: -10px 0 10px 0;
+  position: relative;
+  z-index: 2;
+}
+
+.icon-button {
+  background: var(--bg-dark);
+  border: 1px solid var(--glass-border);
+  color: var(--text-main);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.icon-button:hover {
+  background: var(--primary);
+  color: #000;
+  transform: rotate(180deg);
+}
+
+.token-selector {
+  position: absolute;
+  right: 16px;
+  top: 48px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 12px;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-selector:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
