@@ -1,151 +1,151 @@
 # Project Progress
 
-## Compliance gate (resolved this session)
+## What's been completed
+
+### Compliance gate (resolved, earlier session)
 - Automated volume-generation / wash-trading bot from the original spec doc:
-  REJECTED as a ToS/market-manipulation violation. Dropped from scope permanently.
-- Jurisdiction: user confirmed global public presale, no KYC/geofencing, anonymous
-  team, mint+admin authority destroyed. User explicitly acknowledged in writing
-  ("I understand and accept the legal risk of an anonymous, unrestricted global
-  presale") the securities-law risk this creates (Howey-pattern: public sale +
-  discount pricing + vesting tied to team effort + no buyer verification). Not
-  blocked on my end per the skill's rules — this is the user's legal risk to own,
-  not mine to gate — but it must stay visible in this file so it's never silently
-  forgotten in a later session. Recommend a real securities lawyer review before
+  REJECTED as ToS/market-manipulation violation, permanently dropped.
+- Jurisdiction: user confirmed global public presale, no KYC/geofencing,
+  anonymous team, mint+admin authority destroyed. User explicitly
+  acknowledged in writing the securities-law risk this creates. Not blocked
+  on my end — user's legal risk to own — but must stay visible here so it's
+  never silently forgotten. Recommend a real securities lawyer review before
   mainnet / real funds move.
 
-## What's been completed
-- Architecture plan approved (Phase 2 blueprint checklist confirmed by user).
-- Workspace setup initiated (Cargo project created).
-- Web UI (Phase 3, prior session) fully built:
-  - Vite + React + TypeScript, Jupiter swap widget, OTC portal, wallet adapter,
-    Vitest scaffolded with first passing test.
-- Smart contract — THIS SESSION'S CHANGES:
-  - `vesting.rs` — REWRITTEN. Was a stub (empty `release_vesting`, fake
-    `trigger_volatility_delay`). Now has:
-    - Real cliff (30d) + 8%/month release math, capped at 13 tranches to 100%.
-    - `record_price_snapshot` — permissionless keeper-crank instruction reading
-      AMM pool vault token-account balances directly (no third-party pool SDK
-      dependency), stores into a 48-slot ring buffer (~1 snapshot/hour).
-    - `check_and_trigger_volatility_delay` — permissionless, compares latest
-      snapshot vs. oldest snapshot inside the 48h window; on >=30% drop, delays
-      ONLY the currently-maturing tranche by up to 7 days, without shifting the
-      fixed timestamp grid for any future month (matches spec section 4 exactly).
-    - `release_vesting` now actually transfers tokens via `transfer_checked` CPI,
-      signed by the vesting PDA.
-    - Unit tests included for cliff math, month-index math, 8%/tranche math,
-      30% vs 29% drop threshold, and the "delay doesn't shift future grid" invariant.
-  - `transfer_hook.rs` — REWRITTEN with an important architecture correction:
-    - Original stub implied the hook could CPI the 1% tax directly to the
-      marketing wallet. THIS IS NOT POSSIBLE — Token-2022 blocks any nested
-      transfer of the same mint from inside its own hook (reentrancy guard).
-    - Real implementation: sibling-instruction enforcement. The hook inspects
-      the Instructions sysvar for a companion TransferChecked instruction (same
-      tx) paying >=1% of the trade amount to the marketing wallet, and REJECTS
-      the whole transaction if it's missing when source/destination is the
-      known DEX pool. P2P transfers (neither side is the pool) pass with no
-      fee requirement.
-    - Consequence for the swap-ui: the Jupiter-integrated swap widget MUST be
-      updated to attach this sibling fee-payment instruction whenever the route
-      touches the pool, or every DEX trade will fail at the hook. NOT YET DONE
-      in swap-ui — this is the next concrete task.
-  - `lib.rs` updated: `trigger_volatility_delay` instruction replaced with the
-    two new permissionless crank instructions (`record_price_snapshot`,
-    `check_and_trigger_volatility_delay`).
-  - `Cargo.toml` updated: anchor-spl features `["token_2022", "token_2022_extensions"]`
-    added (required for `token_interface`, `TransferHookAccount`, extension helpers).
+### Rust program — CODE COMPLETE, PARTIALLY CI-VERIFIED
+- `vesting.rs` — full rewrite: real cliff(30d)+8%/month release math,
+  pool-vault-based 48h volatility check, 7-day delay on 30%+ drop that only
+  affects the currently-maturing tranche (doesn't shift future grid). Unit
+  tests included.
+- `transfer_hook.rs` — full rewrite with an architecture correction: the
+  original stub assumed the hook could CPI the 1% tax directly, which
+  Token-2022 blocks (reentrancy guard on same-mint nested transfers). Real
+  implementation uses sibling-instruction verification via the Instructions
+  sysvar — hook rejects the whole tx if a DEX-side transfer doesn't have a
+  matching fee-payment instruction to the marketing wallet in the same tx.
+- `presale.rs` — migrated from legacy `anchor_spl::token` to
+  `token_interface` (Token-2022 compatible). Added `finalize_investor_vesting`
+  wiring buyer allocations to `vesting.rs` (two-step: client calls
+  `vesting::initialize_vesting` then `presale::finalize_investor_vesting`,
+  which cross-validates beneficiary/mint/amount before funding it). Added
+  `activate_tge` admin instruction + `admin: Pubkey` on `PresaleState` (was
+  missing entirely — `claim_tge` could never have succeeded before this).
+- `lib.rs` — instruction list updated to match all of the above.
+- `Anchor.toml` — created (repo had NONE at all). Points `[workspace]
+  members` at the existing `solana-meme-coin/` folder rather than moving
+  files into the conventional `programs/` layout — deliberate choice to
+  avoid a large risky move; can revisit later.
+- `Cargo.toml` — went through several real, CI-verified fixes this session:
+  1. `token_2022_extensions` isn't a real feature on anchor-spl 0.29.0 (was
+     a bad guess) → removed.
+  2. `anchor_spl::token_interface` (used throughout all three rewritten
+     files) doesn't exist before Anchor 0.30.0 at all → bumped
+     anchor-lang/anchor-spl 0.29.0 → 0.30.1, aligned solana-program (1.17.0
+     → 1.18.17) and spl-token-2022 (2.0.0 → 3.0.0) to compatible versions,
+     added required `idl-build` feature and `[profile.release]
+     overflow-checks = true` (both newly required by Anchor 0.30+).
+  3. `init_if_needed` constraint in `presale.rs`'s `BuyTokens` needs an
+     explicit anchor-lang feature flag → added `features = ["init-if-needed"]`.
+     (This one bug was cascading into ~8 unrelated-looking `Bumps`/`Accounts`
+     trait errors — all fixed by this single feature flag.)
+  4. `transfer_hook.rs` called `.get_extension()` without importing
+     `BaseStateWithExtensions`, the trait it's defined on → added the import,
+     also dropped an unused `Seed` import flagged as a warning.
+
+### CI (GitHub Actions) — set up this session, actively in use
+- `.github/workflows/rust-check.yml`: two jobs.
+  - `cargo-check`: fast, `cargo check` + `cargo test --lib` on every push.
+    **CURRENTLY PASSING** (run 28892712897, commit 6074519) — this is real
+    verification that the Rust code is at least type-correct and the unit
+    tests pass.
+  - `anchor-build`: slower, installs Solana CLI + Anchor via avm, then runs
+    `anchor build` (the real BPF-target build). **CURRENTLY FAILING**
+    (same run) — but importantly, ALL the setup steps succeeded (Solana CLI
+    install, Anchor CLI install, throwaway wallet generation) — the failure
+    is in the `anchor build` step itself, meaning it's likely a real
+    BPF-target-specific code/config issue, not flaky environment setup.
+  - **COULD NOT READ THE EXACT ERROR** — GitHub serves job logs from Azure
+    Blob Storage under a signed URL, and that host isn't on this sandbox's
+    allowed network egress list (only github.com/api.github.com are). Every
+    attempt (curl direct, curl -L, web_fetch) got blocked with
+    `x-deny-reason: host_not_allowed`. This is a sandbox limitation, not
+    something fixable by retrying.
+
+### swap-ui — DONE, fully verified (Node toolchain available, unlike Rust)
+- Was previously quote-only with zero wallet adapters and a non-functional
+  swap button. Now: real Phantom/Solflare wallet connection, real swap
+  execution via Jupiter's `/v6/swap-instructions` (not the pre-built-tx
+  endpoint, specifically so the fee instruction could be spliced in before
+  compiling), Token-2022 `transferChecked` fee instruction sized correctly
+  per direction (exact for sells, quote+0.1% buffer for buys — see comment
+  in `src/lib/swapTransaction.ts` for why).
+- VERIFIED: `npm install`, `tsc --noEmit` clean, `vitest run` 2/2 pass,
+  `vite build` clean production build.
+- NOT wired: `OtcPortal.tsx` still fully mocked, spec section 7's real OTC
+  contract doesn't exist in Rust or the UI. Not touched.
+- Needs a `.env` with real mint/marketing-wallet addresses once the program
+  is actually deployed (doesn't exist yet — placeholder program ID only).
 
 ## Current file being worked on
-- Just finished `vesting.rs` and `transfer_hook.rs` rewrites.
+- Just pushed commit `6074519` on branch `claude-session-fixes`. Waiting on
+  the `anchor build` job's actual error text.
 
-## Exact next steps
-1. **No Rust toolchain in the sandbox this was written in — NOT YET COMPILed.**
-   Run `cargo check` / `anchor build` locally or via your GitHub Action before
-   trusting any of this. Flag back with the exact error if it doesn't build —
-   don't just re-guess blind.
-2. `RecordPriceSnapshot` accounts currently accept ANY two token accounts as
-   pool vaults with no on-chain check that they're the canonical pool. Before
-   mainnet, hardcode/verify the real pool vault pubkeys (constraint left as a
-   TODO comment in the file) — otherwise anyone could feed fake reserves and
-   manipulate the volatility trigger.
-3. DONE this session — `swap-ui` full swap execution + fee-instruction wiring:
-   - Found the widget was previously quote-only (no execution, no wallet
-     adapters registered, "Swap Tokens" button had no onClick). Flagged to
-     user, confirmed scope, then built the real thing:
-   - `package.json`: added `@solana/spl-token`, `@solana/wallet-adapter-wallets`.
-   - `App.tsx`: registered Phantom + Solflare wallet adapters (was `[]`),
-     added `WalletMultiButton` connect UI.
-   - New file `src/lib/swapTransaction.ts`:
-     - `buildTaxedSwapTransaction()` — calls Jupiter's `/v6/swap-instructions`
-       (raw instructions, not a pre-built tx) so the fee instruction can be
-       spliced in before compiling. Builds a Token-2022 `transferChecked`
-       instruction paying the marketing wallet's MEME ATA, sized per
-       `computeRequiredFee()`:
-       - SELL side (MEME->SOL): exact fee, input amount is known precisely.
-       - BUY side (SOL->MEME): fee based on quoted `outAmount` + 0.1% buffer,
-         since actual output isn't known until execution — flagged as an
-         approximation to tighten via simulation before mainnet (see comment
-         in file).
-     - Resolves address lookup tables, compiles a v0 `VersionedTransaction`
-       with compute-budget + setup + fee + swap + cleanup instructions.
-   - `SwapWidget.tsx` rewritten: real `useWallet`/`useConnection` hooks,
-     builds+signs+sends+confirms the taxed swap tx, shows tx status and a
-     Solscan link on success.
-   - VERIFIED (this sandbox has Node, unlike Rust): `npm install`,
-     `tsc --noEmit` clean, `vitest run` — 2/2 existing tests still pass,
-     `vite build` — clean production build. This is real verification, not
-     a guess — same confidence level as the Rust side does NOT have yet.
-   - NOT wired: `OtcPortal.tsx` is still fully mocked (fake pool stats, no
-     on-chain calls) — spec section 7's actual OTC swap contract doesn't
-     exist yet, in Rust or the UI. Not touched this session.
-   - Config needed before this actually works end-to-end: `.env` needs
-     `VITE_MEME_COIN_MINT_ADDRESS`, `VITE_MARKETING_WALLET_ADDRESS`,
-     `VITE_MEME_DECIMALS`, `VITE_SOLANA_RPC_URL` — none of these exist yet
-     since the token isn't deployed.
-4. FIXED this session: `presale.rs` migrated from legacy `anchor_spl::token`
-   to `anchor_spl::token_interface` (Token-2022 compatible) throughout —
-   `presale_vault`, `buyer_token_account`, `mint` all now use
-   `InterfaceAccount`/`Interface` types, `transfer_checked` replaces the old
-   `token::transfer`.
-   Added `finalize_investor_vesting` instruction + `FinalizeInvestorVesting`
-   accounts struct wiring `presale.rs` to `vesting.rs`:
-     - `BuyerState` gained a `vesting_funded: bool` field (space updated
-       8+8+8+1 -> +1 more byte).
-     - Flow is now: `buy_tokens` -> `claim_tge` (10%) -> client calls
-       `vesting::initialize_vesting` directly (beneficiary=buyer, mint,
-       total_amount = total_allocation - claimed_amount) -> client calls
-       `presale::finalize_investor_vesting`, which cross-checks the vesting
-       account's beneficiary/mint/total_amount against buyer_state and, only
-       if they match exactly, transfers the 90% from `presale_vault` into the
-       vesting PDA's token account. This is intentionally two client calls
-       rather than one CPI-from-CPI, to keep `initialize_vesting`'s account
-       validation (PDA derivation, mint checks) in the caller's control
-       rather than trying to nest Anchor instruction dispatch inside itself.
-     - FIXED the missing piece noted above: added `activate_tge` instruction
-       (admin-only, checked via a new `admin: Pubkey` field on `PresaleState`
-       set at `initialize_presale` and enforced with `has_one` on
-       `ActivateTGE`). `claim_tge` will now actually work once admin calls it.
-5. After local compile passes: devnet deploy, wire program IDs into swap-ui,
-   end-to-end test presale -> TGE claim -> cliff -> first monthly release ->
-   simulated 30% price drop -> confirm 7-day delay -> confirm next month's
-   grid position is unaffected.
+## Exact next steps (in order)
+1. **Get the `anchor build` error text.** Either:
+   - Paste it from https://github.com/laithqc-create/solana-meme-coin/actions/runs/28892712897/job/85709681565
+     (expand the red "anchor build" step), or
+   - A future Claude session with different network egress rules might be
+     able to fetch the blob storage log directly — worth trying
+     `web_fetch`/`curl` on the signed URL again in case sandbox config
+     differs next time, before assuming it's still blocked.
+2. Fix whatever that error says. Given cargo-check passes, this is very
+   likely one of: BPF stack-size limits (Solana programs have an 8KB stack
+   limit that plain `cargo check` doesn't enforce, but `build-sbf` does —
+   the price_history ring buffer in `vesting.rs` or the multi-account
+   structs could plausibly be stack-heavy — check for `Box<>`-wrapping
+   needs), OR a cfg/target mismatch specific to `build-sbf`'s toolchain
+   pinning vs the `stable` Rust toolchain the cargo-check job uses (worth
+   trying `solana-cli`'s pinned Rust version instead of `dtolnay/rust-toolchain@stable`
+   for the anchor-build job specifically).
+3. Once `anchor build` passes: devnet deploy (`anchor deploy` or manual
+   `solana program deploy`), get a REAL program ID, run `anchor keys sync`
+   (or manually update `declare_id!` in `lib.rs` + `Anchor.toml`'s
+   `[programs.*]` — currently both use the placeholder
+   `TokenVesting1111111111111111111111111111111`).
+4. Fill in `swap-ui/.env` with real mint/marketing-wallet addresses.
+5. Hardcode real pool vault pubkeys into `RecordPriceSnapshot`'s account
+   constraints in `vesting.rs` (currently accepts ANY two token accounts —
+   needs the real pool address once liquidity is actually deployed).
+6. End-to-end test: presale → TGE claim → cliff → first monthly release →
+   simulated 30% price drop → confirm 7-day delay → confirm next month's
+   grid position unaffected.
+7. `OtcPortal.tsx` / spec section 7's actual OTC contract: not started,
+   not scoped yet.
 
 ## Any blockers or decisions pending
-- Waiting on local/CI compile results (item 1 above).
-- Real pool vault addresses not yet known (item 2) — presumably available once
-  the launchpad curve actually deploys liquidity to the pool.
+- Waiting on the `anchor build` error text (item 1 above) — cannot proceed
+  meaningfully on the Rust side without it.
+- Real pool vault addresses not yet known (item 5) — blocked on deployment.
+- `buy_tokens` in `presale.rs` uses plain `+=`/`*` with no overflow checks
+  — pre-existing, not touched this session, worth a pass before mainnet.
+
+## GitHub / CI state
+- Branch: `claude-session-fixes` (NOT merged to main — intentional, needs
+  human review + a passing anchor-build before that's even worth
+  considering).
+- Latest pushed commit: `6074519`.
+- Latest CI run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/28892712897
+  — cargo-check: SUCCESS. anchor-build: FAILURE (error text unknown).
+- PAT tokens used this session are session-scoped and should be revoked
+  after use, same as prior sessions — check whether the current one is
+  still needed before closing this out.
 
 ---
 ### RESUME FROM HERE
-- Rust side (program): still UNCOMPILED — no toolchain in this sandbox.
-  Get `cargo check`/`anchor build` output from your machine or the GitHub
-  Action and paste it back. Highest-priority thing to verify first.
-- TypeScript side (swap-ui): VERIFIED — typecheck, tests, and prod build
-  all pass clean as of this session. Confidence here is real, not a guess.
-- Once the program compiles and deploys to devnet: fill in swap-ui's `.env`
-  with the real mint/marketing-wallet addresses, and hardcode the real pool
-  vault pubkeys into `RecordPriceSnapshot`'s account constraints (currently
-  accepts any two token accounts — see item 2 above).
-- `presale.rs`'s `buy_tokens` uses plain `+=`/`*` arithmetic with no
-  overflow checks — pre-existing from before this session, not touched, but
-  worth a pass before mainnet (Anchor's release profile does NOT panic on
-  overflow by default the way debug does).
+1. Read this file top to bottom first (you're doing that now).
+2. Get the anchor-build error from the run link above — try fetching it
+   directly first in case sandbox network rules differ; fall back to
+   asking the user to paste it if blocked again.
+3. Fix, commit to `claude-session-fixes`, push, watch CI, repeat until
+   anchor-build passes.
+4. Then move to devnet deploy (step 3 in "Exact next steps" above).
