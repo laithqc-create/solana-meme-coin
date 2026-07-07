@@ -3,9 +3,8 @@ use anchor_lang::solana_program::sysvar::instructions::{
     load_current_index_checked, load_instruction_at_checked,
 };
 use anchor_spl::token_2022::spl_token_2022::extension::transfer_hook::TransferHookAccount;
-use spl_tlv_account_resolution::{
-    account::ExtraAccountMeta, seeds::Seed, state::ExtraAccountMetaList,
-};
+use anchor_spl::token_2022::spl_token_2022::extension::BaseStateWithExtensions;
+use spl_tlv_account_resolution::{account::ExtraAccountMeta, state::ExtraAccountMetaList};
 use spl_transfer_hook_interface::instruction::ExecuteInstruction;
 
 /// IMPORTANT ARCHITECTURE NOTE (read before touching this file):
