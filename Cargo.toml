@@ -1,3 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["solana-meme-coin"]
+
+[profile.release]
+overflow-checks = true
