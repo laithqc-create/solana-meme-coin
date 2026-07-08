@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use crate::errors::MemeCoinError;
 use anchor_lang::solana_program::sysvar::instructions::{
     load_current_index_checked, load_instruction_at_checked,
 };
@@ -75,7 +76,7 @@ pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
         anchor_spl::token_2022::spl_token_2022::state::Account,
     >::unpack(&source_data)?;
     let hook_flag = source_ext.get_extension::<TransferHookAccount>()?;
-    require!(bool::from(hook_flag.transferring), TransferHookError::NotInTransfer);
+    require!(bool::from(hook_flag.transferring), MemeCoinError::NotInTransfer);
     drop(source_data);
 
     let is_dex_trade = ctx.accounts.source.key() == ctx.accounts.dex_pool.key()
@@ -88,9 +89,9 @@ pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
 
     let required_fee = (amount as u128)
         .checked_mul(TAX_BPS as u128)
-        .ok_or(TransferHookError::MathOverflow)?
+        .ok_or(MemeCoinError::MathOverflow)?
         .checked_div(TAX_BPS_DENOMINATOR as u128)
-        .ok_or(TransferHookError::MathOverflow)? as u64;
+        .ok_or(MemeCoinError::MathOverflow)? as u64;
 
     // required_fee can legitimately be 0 for dust-sized transfers;
     // in that case there's nothing to enforce.
@@ -154,7 +155,7 @@ fn verify_sibling_fee_instruction(ctx: &Context<TransferHook>, required_fee: u64
         }
     }
 
-    Err(TransferHookError::MissingFeePayment.into())
+    Err(MemeCoinError::MissingFeePayment.into())
 }
 
 #[derive(Accounts)]
@@ -197,16 +198,6 @@ pub struct TransferHook<'info> {
     /// CHECK: Instructions sysvar, passed via extra account meta list,
     /// used to inspect sibling instructions in the same transaction
     pub instructions_sysvar: AccountInfo<'info>,
-}
-
-#[error_code]
-pub enum TransferHookError {
-    #[msg("Transfer hook invoked outside of an active transfer")]
-    NotInTransfer,
-    #[msg("DEX trade is missing its required sibling fee-payment instruction to the marketing wallet")]
-    MissingFeePayment,
-    #[msg("Math overflow computing required fee")]
-    MathOverflow,
 }
 
 #[cfg(test)]

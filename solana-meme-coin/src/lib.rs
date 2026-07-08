@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 
+pub mod errors;
 pub mod transfer_hook;
 pub mod vesting;
 pub mod presale;

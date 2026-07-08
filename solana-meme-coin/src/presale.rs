@@ -3,6 +3,7 @@ use anchor_spl::token_interface::{
     transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
 
+use crate::errors::MemeCoinError;
 use crate::vesting::VestingState;
 
 pub fn initialize_presale(ctx: Context<InitializePresale>) -> Result<()> {
@@ -29,7 +30,7 @@ pub fn buy_tokens(ctx: Context<BuyTokens>, amount_sol: u64) -> Result<()> {
         1 => 500, // $0.00200 equiv (mock rate SOL/Token)
         2 => 444, // $0.00225 equiv
         3 => 400, // $0.00250 equiv
-        _ => return Err(ErrorCode::InvalidPhase.into()),
+        _ => return Err(MemeCoinError::InvalidPhase.into()),
     };
 
     let tokens_to_receive = amount_sol * rate;
@@ -64,7 +65,7 @@ pub fn buy_tokens(ctx: Context<BuyTokens>, amount_sol: u64) -> Result<()> {
 
 pub fn activate_tge(ctx: Context<ActivateTGE>) -> Result<()> {
     let presale_state = &mut ctx.accounts.presale_state;
-    require!(!presale_state.is_tge_active, ErrorCode::TGEAlreadyActive);
+    require!(!presale_state.is_tge_active, MemeCoinError::TGEAlreadyActive);
     presale_state.is_tge_active = true;
     Ok(())
 }
@@ -73,8 +74,8 @@ pub fn claim_tge(ctx: Context<ClaimTGE>) -> Result<()> {
     let presale_state = &ctx.accounts.presale_state;
     let buyer_state = &mut ctx.accounts.buyer_state;
 
-    require!(presale_state.is_tge_active, ErrorCode::TGENotActive);
-    require!(buyer_state.claimed_amount == 0, ErrorCode::AlreadyClaimedTGE);
+    require!(presale_state.is_tge_active, MemeCoinError::TGENotActive);
+    require!(buyer_state.claimed_amount == 0, MemeCoinError::AlreadyClaimedTGE);
 
     // 10% TGE unlock
     let claimable = buyer_state.total_allocation / 10;
@@ -115,28 +116,28 @@ pub fn claim_tge(ctx: Context<ClaimTGE>) -> Result<()> {
 pub fn finalize_investor_vesting(ctx: Context<FinalizeInvestorVesting>) -> Result<()> {
     let buyer_state = &mut ctx.accounts.buyer_state;
 
-    require!(buyer_state.claimed_amount > 0, ErrorCode::TGENotClaimedYet);
-    require!(!buyer_state.vesting_funded, ErrorCode::VestingAlreadyFunded);
+    require!(buyer_state.claimed_amount > 0, MemeCoinError::TGENotClaimedYet);
+    require!(!buyer_state.vesting_funded, MemeCoinError::VestingAlreadyFunded);
 
     let expected_vesting_amount = buyer_state
         .total_allocation
         .checked_sub(buyer_state.claimed_amount)
-        .ok_or(ErrorCode::MathOverflow)?;
+        .ok_or(MemeCoinError::MathOverflow)?;
 
     require_keys_eq!(
         ctx.accounts.vesting_state.beneficiary,
         ctx.accounts.buyer.key(),
-        ErrorCode::VestingBeneficiaryMismatch
+        MemeCoinError::VestingBeneficiaryMismatch
     );
     require_keys_eq!(
         ctx.accounts.vesting_state.mint,
         ctx.accounts.mint.key(),
-        ErrorCode::VestingMintMismatch
+        MemeCoinError::VestingMintMismatch
     );
     require_eq!(
         ctx.accounts.vesting_state.total_amount,
         expected_vesting_amount,
-        ErrorCode::VestingAmountMismatch
+        MemeCoinError::VestingAmountMismatch
     );
 
     let seeds: &[&[u8]] = &[b"presale_vault", &[ctx.bumps.presale_vault]];
@@ -191,7 +192,7 @@ pub struct InitializePresale<'info> {
 
 #[derive(Accounts)]
 pub struct ActivateTGE<'info> {
-    #[account(mut, has_one = admin @ ErrorCode::Unauthorized)]
+    #[account(mut, has_one = admin @ MemeCoinError::Unauthorized)]
     pub presale_state: Account<'info, PresaleState>,
     pub admin: Signer<'info>,
 }
@@ -261,32 +262,6 @@ pub struct BuyerState {
     pub total_allocation: u64,
     pub claimed_amount: u64,
     pub vesting_funded: bool,
-}
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Invalid presale phase.")]
-    InvalidPhase,
-    #[msg("TGE is not yet active.")]
-    TGENotActive,
-    #[msg("TGE has already been activated.")]
-    TGEAlreadyActive,
-    #[msg("Unauthorized: signer is not the presale admin.")]
-    Unauthorized,
-    #[msg("TGE allocation already claimed.")]
-    AlreadyClaimedTGE,
-    #[msg("Buyer must claim their TGE allocation before vesting can be funded.")]
-    TGENotClaimedYet,
-    #[msg("Vesting has already been funded for this buyer.")]
-    VestingAlreadyFunded,
-    #[msg("Vesting account beneficiary does not match this buyer.")]
-    VestingBeneficiaryMismatch,
-    #[msg("Vesting account mint does not match the presale mint.")]
-    VestingMintMismatch,
-    #[msg("Vesting account total_amount does not match buyer's expected 90% allocation.")]
-    VestingAmountMismatch,
-    #[msg("Math overflow.")]
-    MathOverflow,
 }
 
 #[cfg(test)]

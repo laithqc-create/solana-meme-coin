@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use crate::errors::MemeCoinError;
 use anchor_spl::token_interface::{TokenAccount, TokenInterface, TransferChecked, transfer_checked};
 use anchor_spl::token_interface::Mint;
 
@@ -26,7 +27,7 @@ pub fn initialize_vesting(
     let vesting_state = &mut ctx.accounts.vesting_state;
     let clock = Clock::get()?;
 
-    require!(total_amount > 0, VestingError::ZeroAmount);
+    require!(total_amount > 0, MemeCoinError::ZeroAmount);
 
     vesting_state.beneficiary = ctx.accounts.beneficiary.key();
     vesting_state.mint = ctx.accounts.mint.key();
@@ -58,16 +59,16 @@ pub fn record_price_snapshot(ctx: Context<RecordPriceSnapshot>) -> Result<()> {
     let base_reserve = ctx.accounts.pool_base_vault.amount;
     let quote_reserve = ctx.accounts.pool_quote_vault.amount;
 
-    require!(base_reserve > 0, VestingError::EmptyPoolReserve);
+    require!(base_reserve > 0, MemeCoinError::EmptyPoolReserve);
 
     // price = quote per base, fixed-point scaled
     let price: u128 = (quote_reserve as u128)
         .checked_mul(PRICE_PRECISION)
-        .ok_or(VestingError::MathOverflow)?
+        .ok_or(MemeCoinError::MathOverflow)?
         .checked_div(base_reserve as u128)
-        .ok_or(VestingError::MathOverflow)?;
+        .ok_or(MemeCoinError::MathOverflow)?;
 
-    require!(price <= u64::MAX as u128, VestingError::MathOverflow);
+    require!(price <= u64::MAX as u128, MemeCoinError::MathOverflow);
 
     let vesting_state = &mut ctx.accounts.vesting_state;
     let idx = vesting_state.price_history_write_idx as usize;
@@ -97,7 +98,7 @@ pub fn check_and_trigger_volatility_delay(ctx: Context<CheckVolatilityDelay>) ->
     let clock = Clock::get()?;
     let vesting_state = &mut ctx.accounts.vesting_state;
 
-    require!(vesting_state.price_history_count > 0, VestingError::NoPriceHistory);
+    require!(vesting_state.price_history_count > 0, MemeCoinError::NoPriceHistory);
 
     // Freshest snapshot = the most recently written slot.
     let latest_idx = if vesting_state.price_history_write_idx == 0 {
@@ -106,7 +107,7 @@ pub fn check_and_trigger_volatility_delay(ctx: Context<CheckVolatilityDelay>) ->
         (vesting_state.price_history_write_idx - 1) as usize
     };
     let latest = vesting_state.price_history[latest_idx];
-    require!(latest.timestamp > 0, VestingError::NoPriceHistory);
+    require!(latest.timestamp > 0, MemeCoinError::NoPriceHistory);
 
     // Oldest snapshot that still falls within the last 48h.
     let window_start = clock.unix_timestamp - VOLATILITY_WINDOW_SECONDS;
@@ -138,9 +139,9 @@ pub fn check_and_trigger_volatility_delay(ctx: Context<CheckVolatilityDelay>) ->
 
     let drop_bps = ((reference.price - latest.price) as u128)
         .checked_mul(BPS_DENOMINATOR as u128)
-        .ok_or(VestingError::MathOverflow)?
+        .ok_or(MemeCoinError::MathOverflow)?
         .checked_div(reference.price as u128)
-        .ok_or(VestingError::MathOverflow)?;
+        .ok_or(MemeCoinError::MathOverflow)?;
 
     if drop_bps >= DROP_TRIGGER_BPS as u128 {
         let current_month_idx = current_maturing_month_index(vesting_state, clock.unix_timestamp);
@@ -184,7 +185,7 @@ pub fn release_vesting(ctx: Context<ReleaseVesting>) -> Result<()> {
     let clock = Clock::get()?;
     let vesting_state = &mut ctx.accounts.vesting_state;
 
-    require!(clock.unix_timestamp >= vesting_state.cliff_end_time, VestingError::CliffNotReached);
+    require!(clock.unix_timestamp >= vesting_state.cliff_end_time, MemeCoinError::CliffNotReached);
 
     let elapsed = clock.unix_timestamp - vesting_state.cliff_end_time;
     let mut months_matured: u64 = (elapsed / MONTH_SECONDS) as u64 + 1; // +1: cliff_end_time itself unlocks tranche 0
@@ -213,11 +214,11 @@ pub fn release_vesting(ctx: Context<ReleaseVesting>) -> Result<()> {
 
     let total_vested = (vesting_state.total_amount as u128)
         .checked_mul(vested_bps as u128)
-        .ok_or(VestingError::MathOverflow)?
+        .ok_or(MemeCoinError::MathOverflow)?
         .checked_div(BPS_DENOMINATOR as u128)
-        .ok_or(VestingError::MathOverflow)? as u64;
+        .ok_or(MemeCoinError::MathOverflow)? as u64;
 
-    require!(total_vested > vesting_state.released_amount, VestingError::NothingToRelease);
+    require!(total_vested > vesting_state.released_amount, MemeCoinError::NothingToRelease);
 
     let release_amount = total_vested - vesting_state.released_amount;
 
@@ -342,22 +343,6 @@ pub struct VestingState {
     pub price_history_write_idx: u8,
     pub price_history_count: u16,
     pub bump: u8,
-}
-
-#[error_code]
-pub enum VestingError {
-    #[msg("Total vesting amount must be greater than zero")]
-    ZeroAmount,
-    #[msg("Cliff period has not been reached yet")]
-    CliffNotReached,
-    #[msg("Nothing new to release")]
-    NothingToRelease,
-    #[msg("Pool reserve is empty, cannot compute price")]
-    EmptyPoolReserve,
-    #[msg("Not enough price history to evaluate volatility")]
-    NoPriceHistory,
-    #[msg("Math overflow")]
-    MathOverflow,
 }
 
 #[cfg(test)]
