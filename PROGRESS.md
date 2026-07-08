@@ -1,10 +1,16 @@
 # Project Progress
 
-## MILESTONE: anchor build passes clean as of commit 90d5db5
+## MILESTONE: anchor build passes clean AND produces a real artifact, commit 3204ca3
 
-Both CI jobs green: https://github.com/laithqc-create/solana-meme-coin/actions/runs/28973415475
-- cargo-check: SUCCESS
-- anchor-build: SUCCESS (real BPF-target release binary compiles)
+Both CI jobs green, with a real downloadable artifact this time:
+https://github.com/laithqc-create/solana-meme-coin/actions/runs/28974879136
+(anchor-build-output, ~100KB - the compiled .so + IDL)
+
+Note: the PREVIOUS "green" run (90d5db5) actually had a broken artifact
+path (pointed at solana-meme-coin/target/deploy/ when the real output was
+at repo-root target/deploy/, since the workspace Cargo.toml moved target/
+to the root) - it was silently swallowed by if-no-files-found: ignore.
+Fixed and changed to `warn` so this won't go silent again.
 
 This is the first time the Rust program has compiled at all this session -
 started from zero (repo had no Anchor.toml, no root Cargo.toml, wrong
