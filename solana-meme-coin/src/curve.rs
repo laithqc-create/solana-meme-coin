@@ -207,7 +207,7 @@ fn integer_sqrt(n: u128) -> u128 {
         return 0;
     }
     let mut x = n;
-    let mut y = (x + 1) / 2;
+    let mut y = x / 2 + 1; // overflow-safe initial guess (avoids x+1 overflowing at x = u128::MAX)
     while y < x {
         x = y;
         y = (x + n / x) / 2;
@@ -220,11 +220,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn price_at_zero_matches_start_price() {
-        // Buying a tiny amount at s=0 should cost ~PRICE_START per token.
-        let purchase = calculate_purchase(PRICE_START_LAMPORTS as u64, 0).unwrap();
+    fn price_at_zero_round_trips_with_exact_cost() {
+        // Naively assuming "spending PRICE_START buys exactly 1 token" is
+        // WRONG for a continuous integral curve: price is already rising
+        // within that first token's range, so the true cost of 1 whole
+        // token is the average price across [0,1], which is fractionally
+        // more than the starting price alone. Test the real boundary
+        // instead, using the forward integral as ground truth.
+        let exact_cost_for_one_token = cost_for_tokens_ceil(0, 1).unwrap();
+        assert!(
+            exact_cost_for_one_token >= PRICE_START_LAMPORTS,
+            "cost of the first token must be at least the starting price"
+        );
+
+        let purchase = calculate_purchase(exact_cost_for_one_token as u64, 0).unwrap();
         assert_eq!(purchase.tokens_out_whole, 1);
-        assert_eq!(purchase.cost_lamports, PRICE_START_LAMPORTS);
+
+        let purchase_short =
+            calculate_purchase((exact_cost_for_one_token - 1) as u64, 0).unwrap();
+        assert_eq!(
+            purchase_short.tokens_out_whole, 0,
+            "one lamport short of the true cost must not yield a full token"
+        );
     }
 
     #[test]
