@@ -11,13 +11,8 @@ pub fn initialize_presale(ctx: Context<InitializePresale>) -> Result<()> {
     presale_state.admin = ctx.accounts.admin.key();
     presale_state.total_tokens_sold = 0;
     presale_state.total_sol_raised = 0;
-    presale_state.current_phase = 1;
+    presale_state.sold_out = false;
     presale_state.is_tge_active = false;
-
-    // Phase thresholds (Milestones) based on tokens sold
-    // Phase 1: 100M tokens
-    // Phase 2: 200M tokens (cumulative)
-    // Phase 3: 300M tokens (cumulative)
     Ok(())
 }
 
@@ -25,27 +20,30 @@ pub fn buy_tokens(ctx: Context<BuyTokens>, amount_sol: u64) -> Result<()> {
     let presale_state = &mut ctx.accounts.presale_state;
     let buyer_state = &mut ctx.accounts.buyer_state;
 
-    // 1. Determine rate based on milestone phase
-    let rate = match presale_state.current_phase {
-        1 => 500, // $0.00200 equiv (mock rate SOL/Token)
-        2 => 444, // $0.00225 equiv
-        3 => 400, // $0.00250 equiv
-        _ => return Err(MemeCoinError::InvalidPhase.into()),
-    };
+    require!(!presale_state.sold_out, MemeCoinError::PresaleSoldOut);
 
-    let tokens_to_receive = amount_sol * rate;
+    // total_tokens_sold is stored in BASE units (matches decimals used
+    // everywhere else in the program), but curve.rs works in WHOLE-token
+    // units - convert at this boundary only. total_tokens_sold is always
+    // an exact multiple of 10^9 since every purchase adds a whole-token
+    // amount scaled by 10^9 below, so this division is always exact.
+    let cumulative_sold_whole = (presale_state.total_tokens_sold as u128) / 1_000_000_000;
 
-    // 2. Update Milestones (Phase Transitions)
-    presale_state.total_tokens_sold += tokens_to_receive;
-    presale_state.total_sol_raised += amount_sol;
+    let purchase = crate::curve::calculate_purchase(amount_sol, cumulative_sold_whole)?;
 
-    if presale_state.total_tokens_sold >= 100_000_000 * 10u64.pow(9) && presale_state.current_phase == 1 {
-        presale_state.current_phase = 2;
-    } else if presale_state.total_tokens_sold >= 200_000_000 * 10u64.pow(9) && presale_state.current_phase == 2 {
-        presale_state.current_phase = 3;
-    }
+    let tokens_out_base: u64 = purchase
+        .tokens_out_whole
+        .checked_mul(1_000_000_000)
+        .and_then(|v| u64::try_from(v).ok())
+        .ok_or(MemeCoinError::MathOverflow)?;
 
-    // 3. Transfer SOL from buyer to treasury
+    let cost_lamports: u64 = u64::try_from(purchase.cost_lamports)
+        .map_err(|_| MemeCoinError::MathOverflow)?;
+
+    // Transfer only the true cost under the curve - for a purchase that
+    // sells out the presale, this may be LESS than the buyer's requested
+    // amount_sol (see curve::calculate_purchase doc comment). We never
+    // transfer more than cost_lamports.
     let cpi_context = CpiContext::new(
         ctx.accounts.system_program.to_account_info(),
         anchor_lang::system_program::Transfer {
@@ -53,12 +51,40 @@ pub fn buy_tokens(ctx: Context<BuyTokens>, amount_sol: u64) -> Result<()> {
             to: ctx.accounts.treasury.to_account_info(),
         },
     );
-    anchor_lang::system_program::transfer(cpi_context, amount_sol)?;
+    anchor_lang::system_program::transfer(cpi_context, cost_lamports)?;
 
-    // 4. Record buyer's allocation
-    buyer_state.total_allocation += tokens_to_receive;
-    buyer_state.claimed_amount = 0;
-    buyer_state.vesting_funded = false;
+    presale_state.total_tokens_sold = presale_state
+        .total_tokens_sold
+        .checked_add(tokens_out_base)
+        .ok_or(MemeCoinError::MathOverflow)?;
+    presale_state.total_sol_raised = presale_state
+        .total_sol_raised
+        .checked_add(cost_lamports)
+        .ok_or(MemeCoinError::MathOverflow)?;
+
+    if purchase.tokens_out_whole == (crate::curve::PRESALE_TARGET_TOKENS
+        - cumulative_sold_whole)
+    {
+        // This purchase filled the remaining supply exactly - deterministic
+        // sell-out trigger, per the chosen design ("all 300M presale tokens
+        // sold out"). Downstream: a separate instruction (not yet built)
+        // reads this flag to trigger routing collected funds + the DEX
+        // liquidity allocation into a real pool.
+        presale_state.sold_out = true;
+    }
+
+    // buyer_state may already exist (repeat buyer) via init_if_needed - only
+    // total_allocation should accumulate across purchases. claimed_amount
+    // and vesting_funded must NOT be reset here: doing so unconditionally
+    // on every call would let a buyer who already claimed their 10% TGE
+    // allocation buy again and claim a second time, since claim_tge only
+    // guards on claimed_amount == 0. Both fields correctly default to
+    // their zero values only once, at account creation, via init_if_needed's
+    // zero-initialization - never touch them again after that here.
+    buyer_state.total_allocation = buyer_state
+        .total_allocation
+        .checked_add(tokens_out_base)
+        .ok_or(MemeCoinError::MathOverflow)?;
 
     Ok(())
 }
@@ -253,7 +279,7 @@ pub struct PresaleState {
     pub admin: Pubkey,
     pub total_tokens_sold: u64,
     pub total_sol_raised: u64,
-    pub current_phase: u8,
+    pub sold_out: bool,
     pub is_tge_active: bool,
 }
 

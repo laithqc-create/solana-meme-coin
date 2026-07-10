@@ -9,7 +9,7 @@ use anchor_lang::prelude::*;
 #[error_code]
 pub enum MemeCoinError {
     // --- vesting.rs ---
-    #[msg("Total vesting amount must be greater than zero")]
+    #[msg("Amount must be greater than zero")]
     ZeroAmount,
     #[msg("Cliff period has not been reached yet")]
     CliffNotReached,
@@ -27,8 +27,6 @@ pub enum MemeCoinError {
     MissingFeePayment,
 
     // --- presale.rs ---
-    #[msg("Invalid presale phase.")]
-    InvalidPhase,
     #[msg("TGE is not yet active.")]
     TGENotActive,
     #[msg("TGE has already been activated.")]
@@ -48,7 +46,13 @@ pub enum MemeCoinError {
     #[msg("Vesting account total_amount does not match buyer's expected 90% allocation.")]
     VestingAmountMismatch,
 
-    // --- shared across all three modules ---
+    // --- curve.rs ---
+    #[msg("Presale has sold out - no more tokens available on the curve")]
+    PresaleSoldOut,
+    #[msg("Single purchase exceeds the maximum allowed SOL per transaction")]
+    PurchaseExceedsMaxPerTx,
+
+    // --- shared across all modules ---
     #[msg("Math overflow")]
     MathOverflow,
 }
