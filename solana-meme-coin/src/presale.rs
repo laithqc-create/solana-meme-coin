@@ -235,8 +235,14 @@ pub struct BuyTokens<'info> {
         bump
     )]
     pub buyer_state: Account<'info, BuyerState>,
-    #[account(mut)]
-    /// CHECK: Treasury wallet receiving SOL
+    /// CHECK: PDA, seeds enforced below - the ONLY valid destination for
+    /// presale SOL. Previously this was an unconstrained AccountInfo, which
+    /// meant whoever constructed the buy_tokens transaction could point
+    /// investor SOL at ANY account with zero on-chain enforcement - a
+    /// direct contradiction of "funds can never be withdrawn by a human."
+    /// Anchor's seeds constraint below makes this the only address that
+    /// will ever pass account validation, full stop.
+    #[account(mut, seeds = [b"presale_treasury"], bump)]
     pub treasury: AccountInfo<'info>,
     #[account(mut)]
     pub buyer: Signer<'info>,
