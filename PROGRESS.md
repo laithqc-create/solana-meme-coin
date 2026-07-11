@@ -1,6 +1,75 @@
 # Project Progress
 
-## MILESTONE: Smooth bonding curve built, tested, and CI-verified - commit 40b6ee4
+## MILESTONE: Treasury fund-custody gap fixed + Meteora integration scoped - commit b856f78
+
+Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29164923735
+Both jobs green.
+
+**Real bug fixed**: `treasury` in `buy_tokens` was an unconstrained
+`AccountInfo` with zero address/seeds validation - anyone constructing the
+transaction could redirect investor SOL to any account. This directly
+contradicted the "no human can ever withdraw investor funds" design goal.
+Now constrained to a program PDA (`seeds = [b"presale_treasury"]`) -
+Anchor's own account validation makes this the only address that will ever
+pass, full stop. No behavior change for legitimate buyers.
+
+**Meteora Dynamic AMM integration - researched, NOT yet built, and here's
+exactly why:**
+
+User chose Meteora Dynamic AMM (over Raydium CPMM) for the sellout
+auto-route. Before writing any CPI code, checked their actual docs/package
+registry rather than building from memory - important finding:
+- Meteora's NEWER products (DAMM v2, Dynamic Bonding Curve) have official
+  Rust CPI crates with a `cpi` feature flag - safe to depend on.
+- The CLASSIC Dynamic AMM (v1) - the one actually chosen here - is
+  officially supported only via their TypeScript SDK
+  (`@meteora-ag/dynamic-amm-sdk`) and off-chain setup scripts
+  (`meteora-pool-setup`, run via Bun). Pool CREATION specifically is
+  documented as a client-side/off-chain action, not a CPI-from-your-own-
+  program operation.
+
+Given: (a) no official Rust CPI crate for pool creation on this specific
+product, (b) no live Solana RPC access in the sandbox this was researched
+in to fetch/verify their program's real IDL or account layout, and (c) this
+is real-money-moving code where a wrong account in the CPI list is a
+silent fund-loss bug, not a compile error - decided NOT to hand-reconstruct
+the raw CPI from guesswork. User explicitly signed off on this being the
+right call rather than pushing for a risky guess.
+
+**Agreed architecture**: on-chain program custodies and correctly tracks
+funds (verifiable, testable); the actual Meteora pool creation is driven by
+their own maintained SDK/tooling, which is the same integration path every
+legitimate Meteora launch uses.
+
+**What's still needed to finish this** (next session or once real Meteora
+tooling/RPC access is available):
+1. A `seed_liquidity_pool`-type instruction that, gated on
+   `presale_state.sold_out == true`, CPIs the collected SOL out of the
+   `presale_treasury` PDA (as signer, via `invoke_signed`) into whatever
+   Meteora requires for the deposit step. This is the piece that genuinely
+   needs their real IDL/CPI account layout in hand - do NOT guess this.
+   Possible paths to get there safely:
+   a. Find and inspect Meteora's "CPI example for meteora programs" Rust
+      repo on GitHub (mentioned in their org listing, ~13 stars) directly,
+      rather than reconstructing from doc snippets.
+   b. Get RPC/devnet access to fetch their program's actual on-chain IDL
+      and verify account ordering against a real transaction.
+   c. Have the admin pre-create the pool shell via their official
+      TypeScript SDK/script (this part IS well-documented and safe to
+      build), and have the on-chain instruction only need to handle a
+      simpler, better-documented "deposit into existing pool" CPI rather
+      than full pool creation - worth checking if that's a smaller, safer
+      surface than full creation.
+2. **The 30% DEX-liquidity token allocation isn't custodied anywhere yet
+   either** - nothing in the current code mints, reserves, or tracks that
+   30% at all. This needs its own instruction (likely at `initialize_presale`
+   time, transferring 30% of total supply into a PDA-owned vault
+   analogous to `presale_treasury`) before the pool-seeding step has
+   tokens to deposit alongside the SOL.
+
+---
+
+
 
 Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29127684331
 Both jobs green, artifact ~103KB.
