@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-solana_meme_coin = "TokenVesting1111111111111111111111111111111"
+solana_meme_coin = "EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N"
 
 [programs.localnet]
 solana_meme_coin = "EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N"

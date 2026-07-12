@@ -53,8 +53,8 @@ jobs:
       - name: Install Anchor CLI (avm)
         run: |
           cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
-          avm install latest
-          avm use latest
+          avm install 0.32.1
+          avm use 0.32.1
 
       - name: Generate new program keypair
         run: |

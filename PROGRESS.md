@@ -1,5 +1,38 @@
 # Project Progress
 
+## MILESTONE: Real program ID landed, but anchor keys sync only partially applied - fixed
+
+Workflow ran (twice, per user). Confirmed commit `24713bb` on `claude-session-fixes`:
+"Sync real program ID (EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N) via
+anchor keys sync". `lib.rs`'s `declare_id!` is correctly updated to this ID.
+
+**Bug found and fixed**: `anchor keys sync` only updated
+`Anchor.toml`'s `[programs.localnet]` entry to the real ID - it left
+`[programs.devnet]` on the placeholder `TokenVesting1111...`. Since actual
+devnet deployment reads the `devnet` entry specifically, this would have
+silently deployed against/referenced a fake program ID. Fixed by hand
+(one-line edit, `[programs.devnet]` now also
+`EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N`) - not yet pushed, needs a
+PAT or manual push (see blockers).
+
+**RESOLVED**: user confirmed the second run failed outright at the `anchor
+keys sync` step (log: "Not in a Solana workspace... Error: Process
+completed with exit code 1"), BEFORE the commit/artifact-upload steps ever
+ran - so no orphaned keypair/artifact exists from that run. The first run
+is the only real one and it's the one already committed
+(`EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N`).
+
+**Real bug found in the workflow itself, now fixed**: it ran `avm install
+latest` / `avm use latest` - not pinned. The two runs almost certainly
+grabbed two different Anchor CLI versions; the failing run's log showed
+`3.1.10`, a major-version jump past the `0.3x` line this whole project's
+`anchor-lang` dependency is built against, and its workspace-detection
+logic apparently no longer recognized this repo's `Anchor.toml` layout.
+Fixed by pinning `avm install 0.32.1` / `avm use 0.32.1` explicitly
+(matches the anchor-lang version this project is bumping to for the
+Raydium CPMM CPI crate - see milestone above) - NOT yet pushed, needs a
+PAT or manual push.
+
 ## MILESTONE: AMM decision made (Raydium CPMM) + keypair-generation workflow added
 
 **AMM choice resolved: Raydium CPMM** (over Meteora, superseding the
