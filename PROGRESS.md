@@ -1,5 +1,58 @@
 # Project Progress
 
+## MILESTONE: anchor-lang/anchor-spl bumped to 0.32.1 - real CI verification pending
+
+**Confirmed target version via primary source**: fetched Raydium's actual
+`raydium-io/raydium-cpi` README directly (not memory) - it states their CPI
+adapters deliberately lag Anchor's newest releases for AMM contract
+stability, and their most current supported line requires exactly
+`anchor-lang = "=0.32.1"`, `anchor-cli 0.32.1`, `solana-cli 2.3.0` - a hard
+pin, not a minimum. Anchor itself has since shipped a stable `1.0.x` line
+(confirmed via their own release notes), which is NOT what Raydium
+supports yet - bumping this program to `1.0.x` instead would have broken
+compatibility with the Raydium CPMM CPI crate. Confirmed `0.32.1` is the
+correct target, not `1.0.x`.
+
+**This also explains the earlier "Not in a Solana workspace" workflow
+failure**: unpinned `avm install latest` grabs Anchor's newest CLI
+(now `1.0.x`, which recommends Solana CLI `3.1.10` - the version number
+seen in that failure log), not a real bug in workspace layout.
+
+**Applied to `solana-meme-coin/Cargo.toml`**:
+- `anchor-lang`/`anchor-spl`: `0.30.1` -> `=0.32.1` (exact pin, matching
+  Raydium's own pin, to avoid the resolver picking a different patch
+  version than what their CPI crate expects)
+- Removed the direct `solana-program = "1.18.17"` dependency entirely -
+  Anchor's own docs recommend this since 0.31+ to avoid conflicts between
+  the old monolithic solana-program and the new split v2.x crates that
+  anchor-lang 0.32.1 pulls in (`solana-account-info`, `solana-clock`,
+  `solana-cpi`, etc., all pinned to `"2"`). Checked first: no code in this
+  repo does `use solana_program::...` directly (grepped, zero hits outside
+  the `anchor_lang::solana_program` re-export) - so this removal has no
+  code-level fallout to fix.
+
+**Also fixed the same unpinned-`avm install latest` bug in the REAL CI**
+(`rust-check.yml`'s `anchor-build` job, not just the keypair-generation
+workflow) - would have hit the identical failure mode on the very next
+push otherwise, and any resulting failure would have looked like a code
+problem rather than a tooling-pin problem. Pinned to `avm install 0.32.1`
+/ `avm use 0.32.1` there too.
+
+**Verification status - be honest about what's actually been checked**:
+- Confirmed via a real `cargo check` attempt (installed `rustc`/`cargo`
+  1.75.0 from Ubuntu's apt repo in the sandbox, since rustup's installer
+  domain isn't reachable there) that the Cargo dependency GRAPH resolves
+  cleanly - `anchor-lang 0.32.1` + `anchor-spl 0.32.1` + the existing SPL
+  crate versions have no version conflicts.
+- Did NOT get a real compile check locally - Ubuntu's `rustc 1.75.0` is
+  too old (a transitive dependency, `blake3`, requires Rust's
+  `edition2024`, needing `rustc 1.85+`), and no newer toolchain was
+  reachable from this sandbox's network allowlist.
+- **The actual code-level compile check (does `vesting.rs` /
+  `transfer_hook.rs` / `presale.rs` / `curve.rs` still compile against the
+  bumped APIs) has NOT happened yet** - this push to CI is that real test.
+  Don't treat this bump as "verified" until CI reports back.
+
 ## MILESTONE: Real program ID landed, but anchor keys sync only partially applied - fixed
 
 Workflow ran (twice, per user). Confirmed commit `24713bb` on `claude-session-fixes`:

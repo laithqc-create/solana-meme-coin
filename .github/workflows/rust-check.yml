@@ -55,8 +55,8 @@ jobs:
       - name: Install Anchor CLI (via AVM)
         run: |
           cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
-          avm install latest
-          avm use latest
+          avm install 0.32.1
+          avm use 0.32.1
           echo "$HOME/.avm/bin" >> $GITHUB_PATH
 
       - name: Generate throwaway local wallet (CI only, never used for real funds)
