@@ -1,5 +1,54 @@
 # Project Progress
 
+## MILESTONE: AMM decision made (Raydium CPMM) + keypair-generation workflow added
+
+**AMM choice resolved: Raydium CPMM** (over Meteora, superseding the
+"Meteora chosen" note in the milestone below - user confirmed this pivot).
+
+Reasoning, checked against current docs rather than memory:
+- Raydium publishes an official Anchor Rust crate with a `cpi` feature
+  flag - `raydium-cpmm-cpi` (git: `raydium-io/raydium-cpi`) - that covers
+  pool CREATION (`InitializeCpmm`), not just swaps. This is a real,
+  maintained, program-callable CPI surface, unlike Meteora's classic
+  Dynamic AMM v1 (still TS-SDK-only for pool creation - confirmed again,
+  no change from the finding below).
+- Meteora Dynamic Bonding Curve (DBC) does have an official CPI crate too,
+  but it's the wrong shape: DBC is Meteora's OWN on-chain bonding-curve
+  program that graduates to a Meteora AMM automatically. Adopting it would
+  mean replacing this project's own `curve.rs` + presale/vesting logic
+  with Meteora's mechanism, not just plugging in a pool-seeding CPI.
+  Rejected for that reason.
+- Meteora DAMM v2 is a legitimate second choice (also has an official CPI
+  crate) if there's ever a specific reason to prefer Meteora's fee/LP-
+  locking model - noted here in case AMM choice needs revisiting later.
+
+**Real dependency cost flagged, not yet paid**: both the Raydium CPMM crate
+and Meteora DAMM v2 crate pin to `anchor-lang`/`anchor-spl = "0.32.1"`.
+This repo is currently on `0.30.1`. Bumping to 0.32.1 is a real version
+jump to test (potential breaking API changes) against the existing
+`vesting.rs` / `transfer_hook.rs` / `presale.rs`, not just a Cargo.toml
+edit - do this as its own verified step before/alongside writing the
+pool-seeding CPI, don't assume it's a no-op.
+
+**Keypair-generation workflow added** (not yet pushed - see below):
+`.github/workflows/generate-program-keypair.yml`. Manually-triggered
+(`workflow_dispatch`, requires typing "generate" as confirmation) so it
+never fires accidentally. Runs on a GitHub-hosted runner: generates the
+program keypair, runs `anchor keys sync` to replace the placeholder ID in
+`lib.rs`/`Anchor.toml`, commits ONLY that public-ID diff back to the
+branch, uploads the private keypair as a 1-day-retention artifact (never
+printed to logs beyond the public key). This satisfies the "don't generate
+keys inside a chat sandbox" constraint from the previous milestone.
+
+**NOT YET PUSHED**: this session's sandbox has no repo push credentials
+(no PAT set up this round). The workflow file is staged locally only.
+Either provide a PAT (revoke after use, per standing rule) or copy the
+diff in manually via GitHub's web UI before it can actually be triggered.
+
+---
+
+
+
 ## MILESTONE: Treasury fund-custody gap fixed + Meteora integration scoped - commit b856f78
 
 Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29164923735
@@ -193,30 +242,45 @@ conflicting error enums). All fixed and verified on GitHub's real runners.
 - Nothing in progress - just landed a clean, fully-green CI run.
 
 ## Exact next steps (in order)
-1. **Generate a real program keypair** (`solana-keygen new -o
-   target/deploy/solana_meme_coin-keypair.json` after a local `anchor
-   build`, or let a fresh `anchor build` generate one), then `anchor keys
-   sync` to replace the placeholder ID everywhere (`declare_id!` in
-   `lib.rs`, both `[programs.*]` entries in `Anchor.toml`). NOTE: Claude
-   should NOT generate this keypair inside a chat sandbox - key custody
-   risk. Either the user generates it locally, or via a manually-triggered
-   GitHub Actions workflow that uploads it as an authenticated-download
-   artifact (never printed in chat/logs beyond the public pubkey).
-2. **Devnet deploy**: `anchor deploy --provider.cluster devnet` (needs a
-   funded devnet wallet - `solana airdrop` first).
-3. **AMM choice needed (Raydium CPMM vs Meteora Dynamic AMM)** - blocks
-   building the actual pool-seeding instruction that reads
-   `presale_state.sold_out` and CPIs into the chosen AMM to create/fund the
-   real liquidity pool with the collected SOL + 30% DEX-liquidity token
-   allocation. This is the remaining piece of Phase B (the curve itself is
-   done - see milestone above). Ask the user which AMM before starting.
-4. **Fill in `swap-ui/.env`** with the real deployed mint address,
+1. **Push `.github/workflows/generate-program-keypair.yml`** to
+   `claude-session-fixes` - currently staged locally only, no repo push
+   credentials in the sandbox this session. Provide a PAT (revoke after
+   use, per standing rule) or copy the diff in manually via GitHub's web
+   UI.
+2. **Run the keypair-generation workflow** (manual `workflow_dispatch`,
+   type "generate" to confirm). It will: generate the keypair on the
+   runner, run `anchor keys sync` to replace the placeholder ID in
+   `lib.rs`/`Anchor.toml`, commit that public-ID diff back to the branch,
+   and upload the private keypair as a 1-day-retention artifact. Download
+   and relocate it to real secret storage immediately, then delete the
+   GitHub artifact.
+3. **Bump `anchor-lang`/`anchor-spl` 0.30.1 -> 0.32.1** (required by the
+   Raydium CPMM CPI crate - see milestone above). Do this as its own
+   verified step (`cargo check` + `anchor build` + existing test suite)
+   BEFORE writing the pool-seeding CPI, since it's a real version jump
+   that could break existing account/trait usage in `vesting.rs`,
+   `transfer_hook.rs`, or `presale.rs`.
+4. **Devnet deploy**: `anchor deploy --provider.cluster devnet` (needs a
+   funded devnet wallet - `solana airdrop` first). Depends on item 2.
+5. **Build the `seed_liquidity_pool`-type instruction** using
+   `raydium-cpmm-cpi` (git: `raydium-io/raydium-cpi`, `cpi` feature) -
+   gated on `presale_state.sold_out == true`, CPIs the collected SOL out of
+   the `presale_treasury` PDA (as signer, via `invoke_signed`) plus the 30%
+   DEX-liquidity token allocation into a new Raydium CPMM pool
+   (`InitializeCpmm`). This is the remaining piece of Phase B (the curve
+   itself is done - see earlier milestone).
+6. **The 30% DEX-liquidity token allocation still isn't custodied
+   anywhere** - needs its own instruction (likely at `initialize_presale`
+   time) transferring 30% of total supply into a PDA-owned vault analogous
+   to `presale_treasury`, before item 5 has tokens to deposit alongside the
+   SOL.
+7. **Fill in `swap-ui/.env`** with the real deployed mint address,
    marketing wallet address, decimals, and RPC URL.
-5. **Hardcode real pool vault pubkeys** into `RecordPriceSnapshot`'s account
+8. **Hardcode real pool vault pubkeys** into `RecordPriceSnapshot`'s account
    constraints in `vesting.rs` - currently accepts ANY two token accounts,
    which is fine for now but must be locked down before real funds are at
-   risk. Blocked until liquidity is actually deployed to a pool (item 3).
-6. **End-to-end test on devnet**: initialize_presale -> buy_tokens
+   risk. Blocked until liquidity is actually deployed to a pool (item 5).
+9. **End-to-end test on devnet**: initialize_presale -> buy_tokens
    (repeatedly, exercising the curve across its full range, including the
    exact-sellout capping case) -> activate_tge -> claim_tge ->
    initialize_vesting (client-side, 90% of allocation) ->
@@ -225,19 +289,22 @@ conflicting error enums). All fixed and verified on GitHub's real runners.
    check_and_trigger_volatility_delay -> confirm the 7-day delay applies ->
    confirm the NEXT month's release is still on the original calendar grid
    (not shifted).
-7. `OtcPortal.tsx` / spec section 7's actual on-chain OTC contract: not
-   started, not scoped yet - will need its own design pass.
-8. Pre-mainnet housekeeping (not urgent, but don't forget):
-   - Get a professional security audit of `curve.rs` specifically before
-     mainnet - highest-priority module for review, real-money-handling
-     integer math (two real bugs already caught by unit tests this
-     session - a good sign the tests work, not a reason to skip audit).
-   - Get a real securities lawyer review (see compliance gate note above).
+10. `OtcPortal.tsx` / spec section 7's actual on-chain OTC contract: not
+    started, not scoped yet - will need its own design pass.
+11. Pre-mainnet housekeeping (not urgent, but don't forget):
+    - Get a professional security audit of `curve.rs` specifically before
+      mainnet - highest-priority module for review, real-money-handling
+      integer math (two real bugs already caught by unit tests this
+      session - a good sign the tests work, not a reason to skip audit).
+    - Get a real securities lawyer review (see compliance gate note above).
 
 ## Any blockers or decisions pending
-- **AMM choice (Raydium CPMM vs Meteora)** needed before Phase B can be
-  finished - see item 3 above.
-- Program keypair not yet generated (item 1) - blocks devnet deploy.
+- **Workflow file not pushed** - no PAT in this session's sandbox (item 1
+  above). Needs a PAT or manual copy-in before the keypair can be
+  generated.
+- Program keypair not yet generated (item 2) - blocks devnet deploy and
+  everything downstream of it.
+- ~~AMM choice~~ RESOLVED this session: Raydium CPMM (see milestone above).
 
 ## GitHub / CI state
 - Branch: `claude-session-fixes` (NOT merged to main - still needs human
@@ -251,9 +318,16 @@ conflicting error enums). All fixed and verified on GitHub's real runners.
 ---
 ### RESUME FROM HERE
 1. Read this file (done, if you're reading it).
-2. Decide: merge `claude-session-fixes` to `main` now (CI is green, but a
-   human hasn't read the full diff yet), or keep iterating on the branch
-   first via devnet deploy (item 2 in "Exact next steps").
-3. Either way, next concrete action is generating a real program keypair
-   and running `anchor keys sync` (item 1 above) - everything after that
-   depends on having a real program ID.
+2. AMM choice is RESOLVED: Raydium CPMM. Do not re-litigate this unless
+   something material changes (e.g. Raydium deprecates the CPI crate) -
+   see top milestone for full reasoning.
+3. Immediate blocker: `.github/workflows/generate-program-keypair.yml` is
+   drafted but NOT pushed (no PAT this session). Get it onto
+   `claude-session-fixes` first (PAT or manual copy-in).
+4. Then run that workflow (`workflow_dispatch`, type "generate") to get a
+   real program ID - everything else (devnet deploy, the anchor-lang 0.32.1
+   bump, the Raydium CPMM pool-seeding instruction) depends on that.
+5. Separate open decision, still pending: merge `claude-session-fixes` to
+   `main` now (CI green, but no human full-diff review yet) vs. keep
+   iterating on the branch through devnet deploy first. Not blocking -
+   revisit whenever convenient.
