@@ -1,6 +1,45 @@
 # Project Progress
 
-## MILESTONE: anchor-lang/anchor-spl bumped to 0.32.1 - real CI verification pending
+## MILESTONE: First CI run against the 0.32.1 bump FAILED - real root cause found, second fix pushed
+
+Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29208155045
+(user pulled the actual error log, not guessed at)
+
+**Real error**: `spl-pod v0.2.3` (a transitive dependency, pulled in via
+the old `spl-token-2022 = "3.0.0"` direct dependency) failed to compile:
+`error[E0433]: cannot find decode_error in solana_program` /
+`error[E0405]: cannot find trait PrintProgramError`. Root cause: Cargo can
+only resolve one version of `solana_program` across the whole dependency
+graph. `anchor-lang 0.32.1` pulls in the newer split `solana-program`
+crates; the old `spl-pod 0.2.3` (needed by the old `spl-token-2022 3.0.0`)
+calls functions that only exist in the pre-split `solana_program` API.
+Bumping `anchor-lang` alone was not enough - the SPL token-extension
+crates needed bumping too.
+
+**Real fix applied** (verified the code's actual usage first, not just
+version-matched blindly):
+- Grepped the codebase: `transfer_hook.rs` never imports `spl_token_2022`
+  by crate name directly - it goes exclusively through
+  `anchor_spl::token_2022::spl_token_2022`, Anchor's own re-export. This
+  means the explicit `spl-token-2022 = "3.0.0"` direct dependency in
+  Cargo.toml was both unnecessary AND the actual cause of the conflict
+  (forcing the old `spl-pod` into the graph). REMOVED it entirely - Anchor
+  will pull in whatever `spl-token-2022` version it needs internally.
+- `spl-tlv-account-resolution` / `spl-transfer-hook-interface`, which ARE
+  used directly by name (for `ExtraAccountMeta`, `ExtraAccountMetaList`,
+  `ExecuteInstruction`), bumped `0.6.3` -> `0.10.0` - matched against a
+  recent (dated March 2026) real-world guide pairing these exact crate
+  versions with the Anchor `0.3x` split-solana-program line.
+- Reviewed `transfer_hook.rs`'s actual API usage
+  (`ExtraAccountMeta::new_with_pubkey`, `ExtraAccountMetaList::init`,
+  `StateWithExtensions::unpack`, `get_extension::<TransferHookAccount>`)
+  before pushing - these are foundational, long-stable APIs in this
+  interface, reasonable bet they still hold at 0.10.0, but NOT compiler-
+  verified yet.
+
+**Still not verified** - this is the next CI run to check, not a done
+deal. If it fails again, get the real log again rather than guessing at
+a third fix blind.
 
 **Confirmed target version via primary source**: fetched Raydium's actual
 `raydium-io/raydium-cpi` README directly (not memory) - it states their CPI
