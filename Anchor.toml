@@ -4,28 +4,20 @@
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-solana_meme_coin = "TokenVesting1111111111111111111111111111111"
-
 [programs.devnet]
 solana_meme_coin = "TokenVesting1111111111111111111111111111111"
 
-[registry]
-url = "https://api.apr.dev"
+[programs.localnet]
+solana_meme_coin = "EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N"
 
 [provider]
 cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
+[workspace]
+members = ["solana-meme-coin"]
+
 [scripts]
 test = "echo \"No TypeScript integration test suite configured yet — see PROGRESS.md\""
 
-# NOTE: this workspace intentionally points at the existing "solana-meme-coin"
-# folder rather than the conventional "programs/solana-meme-coin" Anchor CLI
-# default. Anchor's workspace member resolution doesn't require the
-# "programs/" prefix — it just needs a valid path to a directory containing
-# a Cargo.toml. Kept as-is to avoid a large, risk-bearing directory move of
-# an already-reviewed codebase; can be relocated later if you want strict
-# convention-matching with `anchor init`-generated projects.
-[workspace]
-members = ["solana-meme-coin"]
+[hooks]

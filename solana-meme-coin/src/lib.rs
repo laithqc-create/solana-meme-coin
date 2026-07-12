@@ -10,7 +10,7 @@ use transfer_hook::*;
 use vesting::*;
 use presale::*;
 
-declare_id!("TokenVesting1111111111111111111111111111111");
+declare_id!("EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N");
 
 #[program]
 pub mod solana_meme_coin {
