@@ -424,36 +424,24 @@ conflicting error enums). All fixed and verified on GitHub's real runners.
   blocked on my end - user's legal risk to own - but stays visible here.
   Recommend a real securities lawyer review before mainnet / real funds.
 
-### Rust program - CODE COMPLETE AND CI-VERIFIED
-- `vesting.rs`, `transfer_hook.rs`, `presale.rs` all rewritten this session
-  (see git log on branch `claude-session-fixes` for full detail on each).
-- `errors.rs` (NEW) - single shared `MemeCoinError` enum. Anchor only allows
-  ONE #[error_code] enum per program; the three files each had their own,
-  which passed `cargo check` fine but failed `anchor build` with "Multiple
-  error definitions are not allowed." This was the final blocker.
-- `Anchor.toml` - created (repo had none). Points `[workspace] members` at
-  the existing `solana-meme-coin/` folder instead of moving into the
-  conventional `programs/` layout.
-- Root `Cargo.toml` - created (repo had none anywhere). Required because
-  `anchor build` runs `cargo metadata` from the repo root and needs an
-  actual Cargo workspace manifest there - Anchor.toml's `[workspace]
-  members` list alone wasn't sufficient. Contains `[profile.release]
-  overflow-checks = true`, required by Anchor 0.30+ and must live at the
-  workspace root specifically (Cargo ignores `[profile.*]` in non-root
-  members).
-- `solana-meme-coin/Cargo.toml` - anchor-lang/anchor-spl bumped 0.29.0 ->
-  0.30.1 (token_interface module didn't exist before 0.30), added
-  `init-if-needed` feature (required by presale.rs's `BuyTokens`, was
-  silently breaking that whole Accounts derive), added `idl-build` feature,
-  aligned solana-program/spl-token-2022 versions.
-- Program ID is still the PLACEHOLDER `TokenVesting1111111111111111111111111111111`
-  in both `declare_id!` (lib.rs) and `Anchor.toml`. NOT a real generated
-  keypair yet.
+### Rust program - CODE COMPLETE AND CI-VERIFIED (anchor build passes)
+- `vesting.rs`, `transfer_hook.rs`, `presale.rs`, `curve.rs`, `errors.rs`
+  all in place, `cargo check` + real `anchor build` (Solana BPF toolchain)
+  both green as of run 29235257382.
+- `anchor-lang`/`anchor-spl` on `=0.32.1` (Raydium CPMM CPI requirement) -
+  see milestones above for the full dependency-conflict chain this took
+  to resolve.
+
+### Program identity - REAL, not placeholder
+- Program ID: `EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N`, synced
+  everywhere (`lib.rs` declare_id!, Anchor.toml devnet + localnet).
+- Private keypair generated via the `generate-program-keypair.yml`
+  workflow, downloaded by user - confirm it's in real secure storage, not
+  just a Downloads folder, since this is the deploy/upgrade authority key.
 
 ### CI (GitHub Actions) - fully working
-- `.github/workflows/rust-check.yml`: `cargo-check` (fast) + `anchor-build`
-  (slow, full toolchain install) both passing on every push to
-  `claude-session-fixes`.
+- `.github/workflows/rust-check.yml`: `cargo-check` + `anchor-build` both
+  passing on every push to `claude-session-fixes`.
 
 ### swap-ui - DONE, fully verified
 - Real Phantom/Solflare wallet connection, real swap execution via
@@ -461,68 +449,67 @@ conflicting error enums). All fixed and verified on GitHub's real runners.
   matching the transfer hook's sibling-instruction requirement.
 - VERIFIED: `npm install`, `tsc --noEmit`, `vitest run` (2/2 pass), `vite
   build` all clean.
-- NOT wired: `OtcPortal.tsx` still fully mocked, spec section 7's OTC
-  contract doesn't exist in Rust or the UI yet.
+- NOT wired: `OtcPortal.tsx` still fully mocked - explicitly OUT of the
+  "100% devnet" scope per user, see Project phasing below.
+
+## Project phasing (user-confirmed)
+**Phase A (current focus): get THIS project to 100% verified on devnet**
+before starting anything new. **Phase B (next, after Phase A is fully
+done): "launchpad curve"** - scope not yet defined in this file, need to
+clarify with user what this covers (a generalized/reusable version of the
+bonding-curve mechanism for multiple token launches? a separate product?)
+before Phase B work starts. Do not start Phase B work until Phase A's
+checklist below is fully checked off AND Phase B's scope is confirmed.
 
 ## Current file being worked on
-- Nothing in progress - just landed a clean, fully-green CI run.
+- Nothing in progress - next action is devnet deploy (Phase A, item 1
+  below).
 
-## Exact next steps (in order)
-1. **Push `.github/workflows/generate-program-keypair.yml`** to
-   `claude-session-fixes` - currently staged locally only, no repo push
-   credentials in the sandbox this session. Provide a PAT (revoke after
-   use, per standing rule) or copy the diff in manually via GitHub's web
-   UI.
-2. **Run the keypair-generation workflow** (manual `workflow_dispatch`,
-   type "generate" to confirm). It will: generate the keypair on the
-   runner, run `anchor keys sync` to replace the placeholder ID in
-   `lib.rs`/`Anchor.toml`, commit that public-ID diff back to the branch,
-   and upload the private keypair as a 1-day-retention artifact. Download
-   and relocate it to real secret storage immediately, then delete the
-   GitHub artifact.
-3. **Bump `anchor-lang`/`anchor-spl` 0.30.1 -> 0.32.1** (required by the
-   Raydium CPMM CPI crate - see milestone above). Do this as its own
-   verified step (`cargo check` + `anchor build` + existing test suite)
-   BEFORE writing the pool-seeding CPI, since it's a real version jump
-   that could break existing account/trait usage in `vesting.rs`,
-   `transfer_hook.rs`, or `presale.rs`.
-4. **Devnet deploy**: `anchor deploy --provider.cluster devnet` (needs a
-   funded devnet wallet - `solana airdrop` first). Depends on item 2.
-5. **Build the `seed_liquidity_pool`-type instruction** using
-   `raydium-cpmm-cpi` (git: `raydium-io/raydium-cpi`, `cpi` feature) -
-   gated on `presale_state.sold_out == true`, CPIs the collected SOL out of
-   the `presale_treasury` PDA (as signer, via `invoke_signed`) plus the 30%
+## Exact next steps (in order) - this IS the "100% devnet" checklist
+1. **Devnet deploy**: `anchor deploy --provider.cluster devnet`. Needs a
+   funded devnet wallet (`solana airdrop`) and the real program keypair
+   (already generated, downloaded by user) as signer. NOT DONE YET -
+   nothing has touched a live cluster so far, only local/CI build
+   verification.
+2. **Build the `seed_liquidity_pool` instruction** using `raydium-cpmm-cpi`
+   (git: `raydium-io/raydium-cpi`, `cpi` feature, `anchor-lang = "=0.32.1"`
+   already matches what's pinned in this repo) - gated on
+   `presale_state.sold_out == true`, CPIs the collected SOL out of the
+   `presale_treasury` PDA (as signer, via `invoke_signed`) plus the 30%
    DEX-liquidity token allocation into a new Raydium CPMM pool
-   (`InitializeCpmm`). This is the remaining piece of Phase B (the curve
-   itself is done - see earlier milestone).
-6. **The 30% DEX-liquidity token allocation still isn't custodied
+   (`InitializeCpmm`).
+3. **The 30% DEX-liquidity token allocation still isn't custodied
    anywhere** - needs its own instruction (likely at `initialize_presale`
    time) transferring 30% of total supply into a PDA-owned vault analogous
-   to `presale_treasury`, before item 5 has tokens to deposit alongside the
-   SOL.
-7. **Fill in `swap-ui/.env`** with the real deployed mint address,
-   marketing wallet address, decimals, and RPC URL.
-8. **Hardcode real pool vault pubkeys** into `RecordPriceSnapshot`'s account
-   constraints in `vesting.rs` - currently accepts ANY two token accounts,
-   which is fine for now but must be locked down before real funds are at
-   risk. Blocked until liquidity is actually deployed to a pool (item 5).
-9. **End-to-end test on devnet**: initialize_presale -> buy_tokens
-   (repeatedly, exercising the curve across its full range, including the
-   exact-sellout capping case) -> activate_tge -> claim_tge ->
+   to `presale_treasury`, before item 2 has tokens to deposit alongside
+   the SOL.
+4. **Fill in `swap-ui/.env`** with the real deployed mint address,
+   marketing wallet address, decimals, and devnet RPC URL.
+5. **Hardcode real pool vault pubkeys** into `RecordPriceSnapshot`'s
+   account constraints in `vesting.rs` - currently accepts ANY two token
+   accounts. Blocked until item 2 (liquidity actually deployed to a pool).
+6. **Full end-to-end test on devnet**: initialize_presale -> buy_tokens
+   (repeatedly, exercising the curve's full range, including the exact-
+   sellout capping case) -> activate_tge -> claim_tge ->
    initialize_vesting (client-side, 90% of allocation) ->
    finalize_investor_vesting -> wait past cliff -> release_vesting ->
    simulate a 30%+ price drop via record_price_snapshot +
    check_and_trigger_volatility_delay -> confirm the 7-day delay applies ->
    confirm the NEXT month's release is still on the original calendar grid
-   (not shifted).
-10. `OtcPortal.tsx` / spec section 7's actual on-chain OTC contract: not
-    started, not scoped yet - will need its own design pass.
-11. Pre-mainnet housekeeping (not urgent, but don't forget):
-    - Get a professional security audit of `curve.rs` specifically before
-      mainnet - highest-priority module for review, real-money-handling
-      integer math (two real bugs already caught by unit tests this
-      session - a good sign the tests work, not a reason to skip audit).
-    - Get a real securities lawyer review (see compliance gate note above).
+   (not shifted). This is the actual "100%" bar per the defi-blueprint
+   skill's three-tier testing pipeline (in-memory unit tests are already
+   done; local-validator `anchor test` integration suite for CPI/compute-
+   budget behavior has NOT been run yet and should happen before/alongside
+   this devnet pass, not skipped).
+
+## Explicitly OUT of "100% devnet" scope (separate, later work)
+- `OtcPortal.tsx` / spec section 7's on-chain OTC contract - not started,
+  not scoped.
+- Pre-mainnet housekeeping (professional security audit of `curve.rs`
+  specifically, real securities lawyer review) - needed before mainnet,
+  not before devnet completion.
+- Phase B "launchpad curve" - scope TBD, starts only after Phase A is
+  fully checked off above.
 
 ## Any blockers or decisions pending
 - **Workflow file not pushed** - no PAT in this session's sandbox (item 1
