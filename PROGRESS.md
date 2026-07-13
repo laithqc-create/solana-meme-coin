@@ -1,6 +1,54 @@
 # Project Progress
 
-## MILESTONE: First CI run against the 0.32.1 bump FAILED - real root cause found, second fix pushed
+## MILESTONE: Second CI failure root-caused via real Anza issue tracker - three-part fix applied
+
+Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29208466189
+(`cargo check` job PASSED this time; `anchor build` job failed on a
+`cargo-build-sbf`-specific error - user pulled the real log again)
+
+**Real error**: `zeroize_derive`/`indexmap`/`blake3` (transitive deps)
+require Rust's `edition2024`, but `cargo-build-sbf` (Solana's official BPF
+build tool) bundles its OWN separate, pinned Rust/Cargo toolchain
+(currently `1.84.x`) independent of the system Rust used for the plain
+`cargo check` job - that's why `cargo check` passed but `anchor build`
+didn't. `edition2024` wasn't stabilized until Rust `1.85`.
+
+**Confirmed via Anza's own GitHub issue tracker (not memory, not a blog)**
+this is a known, previously-reported, already-resolved-once issue:
+`anza-xyz/agave#8443` (closed as duplicate) -> `anza-xyz/solana-sdk#385`
+(closed, state_reason: completed). An Anza maintainer's own fix, quoted
+directly: pin the offending transitive crate with
+`cargo update --precise <old-ver> -p <crate>@<new-ver>`. This is the
+*officially endorsed* fix pattern for this exact class of problem, not an
+improvised workaround.
+
+**Real root cause of why THIS project hit it**: traced via the sparse
+crates.io index (not guessed) - `anchor-spl 0.32.1` declares a hard
+`spl-token-2022 = "^8"` dependency (not a range we can downgrade within).
+`spl-token-2022 8.0.1`'s own transitive tree is what pulls in the
+edition2024-requiring crates.
+
+**Fix applied, verified locally as far as tooling allows**:
+- `spl-tlv-account-resolution` / `spl-transfer-hook-interface`: `0.10.0`
+  -> `0.9.0`. Traced via Cargo.lock parsing (not cargo tree, which needed
+  a newer rustc than available locally) that `0.10.0` was pulling in a
+  SECOND, newer generation of `solana-program` (`4.0.0`) alongside
+  anchor-lang's own required `2.x` line - `0.9.0` (the release SPL's own
+  changelog describes as "Update to Solana v2.1 crates") resolves to a
+  single consistent `solana-program 2.3.0` across the whole graph instead.
+- `blake3 = "=1.5.5"`, `indexmap = "=2.2.6"`, `zeroize_derive = "=1.4.3"`:
+  each pinned to the newest release that predates its edition2024 move,
+  found by iteratively regenerating the lockfile against apt's local
+  `rustc 1.75` (old enough to surface the same edition2024 wall as CI's
+  bundled `1.84`) and reading the actual "who depends on X" answer
+  straight from Cargo.lock's own dependency-edge data each time, rather
+  than guessing a version and hoping.
+
+**Honest caveat**: local resolution stopped being useful past this point -
+apt's `rustc 1.75` is old enough that it also flags real MSRV gaps
+(`borsh-derive 1.7.0` needing `1.77`) that CI's actual `1.84` toolchain
+already satisfies. From here, CI is the only trustworthy signal for
+whether more edition2024 blockers remain further down the tree.
 
 Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29208155045
 (user pulled the actual error log, not guessed at)

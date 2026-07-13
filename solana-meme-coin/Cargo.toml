@@ -19,5 +19,20 @@ idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 [dependencies]
 anchor-lang = { version = "=0.32.1", features = ["init-if-needed"] }
 anchor-spl = { version = "=0.32.1", features = ["token_2022"] }
-spl-tlv-account-resolution = "0.10.0"
-spl-transfer-hook-interface = "0.10.0"
+spl-tlv-account-resolution = "0.9.0"
+spl-transfer-hook-interface = "0.9.0"
+
+# The following pins work around a known, currently-open gap in Solana's
+# official BPF build toolchain: cargo-build-sbf bundles its own pinned
+# Rust/Cargo (currently 1.84.x) separate from the system toolchain, and
+# that bundled Cargo does not yet support the `edition2024` feature
+# (stabilized in Rust 1.85). Several transitive dependencies pulled in by
+# anchor-spl's token_2022 feature (via spl-token-2022 8.x) have moved to
+# edition2024 in their newest releases. This is a confirmed, officially
+# acknowledged upstream issue (see anza-xyz/solana-sdk#385, resolved via
+# exactly this pinning approach by an Anza maintainer) - NOT a workaround
+# invented for this project. Pinned to the newest release of each crate
+# that predates its edition2024 migration:
+blake3 = "=1.5.5"
+indexmap = "=2.2.6"
+zeroize_derive = "=1.4.3"
