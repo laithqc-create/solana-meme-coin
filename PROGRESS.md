@@ -1,6 +1,29 @@
 # Project Progress
 
-## MILESTONE: Second CI failure root-caused via real Anza issue tracker - three-part fix applied
+## MILESTONE: Third CI run - one more MSRV pin needed (unicode-segmentation)
+
+Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29234547838
+(`cargo check` passed again; `anchor build` failed further into the build
+than last time - real progress each round)
+
+**Real error**: `unicode-segmentation@1.13.3` declares `rust-version =
+"1.85.0"` - one above `cargo-build-sbf`'s bundled `1.84.1`. Same class of
+issue as the last milestone (bundled BPF toolchain lagging the crates.io
+ecosystem), different specific mechanism (an explicit MSRV floor via
+Cargo's `rust-version` field, not an edition2024 syntax requirement) - the
+error message itself gave the exact fix command, same pattern as before.
+
+**Fix**: tried pinning to `1.13.1` first (the last version without the
+1.85 MSRV floor per crates.io's `rust_version` field) - that version is
+YANKED, along with `1.13.0`. Fell back to `1.12.0` (last valid, non-yanked
+release below the floor). Checked yanked status directly via the sparse
+index rather than assuming the pin would resolve.
+
+**Local verification ceiling reached again**: next local error
+(`solana-program 2.3.0` needs rustc `1.79`) is a false blocker - CI's real
+bundled `1.84.1` already satisfies `1.79`, only the sandbox's `1.75`
+doesn't. This is genuinely the end of what local `cargo check` can tell us
+- everything past this point needs a real CI run to verify.
 
 Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29208466189
 (`cargo check` job PASSED this time; `anchor build` job failed on a
