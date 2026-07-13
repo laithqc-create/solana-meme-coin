@@ -1,6 +1,36 @@
 # Project Progress
 
-## MILESTONE: Third CI run - one more MSRV pin needed (unicode-segmentation)
+## MILESTONE: anchor-lang 0.32.1 bump CONFIRMED WORKING - full CI green
+
+Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29235257382
+Both jobs passed: `cargo check` AND `anchor build` (overall conclusion:
+`success`, confirmed via the Actions API directly, not assumed from a
+partial log).
+
+This closes out the anchor-lang/anchor-spl 0.32.1 bump work. Final
+dependency state in `solana-meme-coin/Cargo.toml`:
+- `anchor-lang` / `anchor-spl` = `=0.32.1` (matches Raydium's hard pin)
+- `spl-tlv-account-resolution` / `spl-transfer-hook-interface` = `0.9.0`
+  (the "Update to Solana v2.1 crates" release - keeps a single consistent
+  `solana-program 2.x` generation across the whole graph, avoiding the
+  duplicate-generation conflict `0.10.0` introduced)
+- `blake3 = "=1.5.5"`, `indexmap = "=2.2.6"`, `zeroize_derive = "=1.4.3"`,
+  `unicode-segmentation = "=1.12.0"`: pins working around a known, Anza-
+  acknowledged gap between crates.io's ecosystem and `cargo-build-sbf`'s
+  currently-bundled Rust toolchain (`1.84.x`, doesn't support `edition2024`
+  / the `1.85` MSRV several crates have since adopted). Confirmed via
+  Anza's own issue tracker this is the officially endorsed fix pattern,
+  not an improvised workaround.
+
+**What this took**: 4 CI round-trips (2 failures caught by `cargo check`
+alone in earlier explorations, 3 real `anchor build` failures against
+actual Solana BPF toolchain constraints), each one root-caused from a real
+error log rather than guessed at - per the defi-blueprint skill's core
+rule against inventing library/version details from memory.
+
+**Real next step, now actually unblocked**: devnet deploy
+(`anchor deploy --provider.cluster devnet`), then the Raydium CPMM
+`seed_liquidity_pool` instruction (the actual remaining coding task).
 
 Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29234547838
 (`cargo check` passed again; `anchor build` failed further into the build
@@ -514,16 +544,19 @@ conflicting error enums). All fixed and verified on GitHub's real runners.
 ---
 ### RESUME FROM HERE
 1. Read this file (done, if you're reading it).
-2. AMM choice is RESOLVED: Raydium CPMM. Do not re-litigate this unless
-   something material changes (e.g. Raydium deprecates the CPI crate) -
-   see top milestone for full reasoning.
-3. Immediate blocker: `.github/workflows/generate-program-keypair.yml` is
-   drafted but NOT pushed (no PAT this session). Get it onto
-   `claude-session-fixes` first (PAT or manual copy-in).
-4. Then run that workflow (`workflow_dispatch`, type "generate") to get a
-   real program ID - everything else (devnet deploy, the anchor-lang 0.32.1
-   bump, the Raydium CPMM pool-seeding instruction) depends on that.
-5. Separate open decision, still pending: merge `claude-session-fixes` to
-   `main` now (CI green, but no human full-diff review yet) vs. keep
-   iterating on the branch through devnet deploy first. Not blocking -
-   revisit whenever convenient.
+2. AMM choice is RESOLVED: Raydium CPMM. anchor-lang/anchor-spl bump to
+   0.32.1 is RESOLVED and CI-CONFIRMED (run 29235257382, both jobs green).
+   Do not re-litigate either unless something material changes.
+3. Program keypair is real and synced: `EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N`
+   (both lib.rs declare_id! and Anchor.toml's devnet + localnet entries).
+4. Next real action: **devnet deploy**
+   (`anchor deploy --provider.cluster devnet`) - needs a funded devnet
+   wallet (`solana airdrop`). This hasn't happened yet - only the local
+   build has been verified via CI, nothing has touched an actual cluster.
+5. After a successful devnet deploy: build the `seed_liquidity_pool`
+   instruction using `raydium-cpmm-cpi` (git dependency on
+   raydium-io/raydium-cpi, `anchor-lang = "=0.32.1"` matches what's
+   already pinned here), gated on `presale_state.sold_out`.
+6. Separate open decision, still pending: merge `claude-session-fixes` to
+   `main` now vs. keep iterating on the branch through devnet deploy
+   first. Not blocking - revisit whenever convenient.
