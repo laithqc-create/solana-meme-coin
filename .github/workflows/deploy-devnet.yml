@@ -1,0 +1,120 @@
+name: Deploy to Devnet
+
+# Manual-only trigger. Deploys the program to Solana Devnet using:
+#   - The REAL program keypair, reconstructed from the DEVNET_PROGRAM_KEYPAIR
+#     repo secret (never printed, never committed - exists only in the
+#     runner's ephemeral filesystem for the duration of this job).
+#   - A FRESH, disposable payer/fee wallet generated on the runner each run
+#     and funded via devnet's free faucet. This wallet has zero value
+#     outside this run and is never persisted anywhere.
+#
+# SECURITY NOTE:
+# DEVNET_PROGRAM_KEYPAIR must be set directly in GitHub's UI
+# (Settings -> Secrets and variables -> Actions), never pasted in chat or
+# committed to the repo. This is the program's real upgrade authority -
+# even on devnet, treat the habit of handling it correctly as practice for
+# the mainnet version of this same workflow later.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm a devnet deploy'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-devnet:
+    if: ${{ github.event.inputs.confirm == 'deploy' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard against accidental runs
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "deploy" ]; then
+            echo "Confirmation input did not match 'deploy'. Aborting."
+            exit 1
+          fi
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI (pinned, matches this repo's anchor-lang)
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          avm install 0.32.1
+          avm use 0.32.1
+
+      - name: Reconstruct real program keypair from secret
+        env:
+          DEVNET_PROGRAM_KEYPAIR: ${{ secrets.DEVNET_PROGRAM_KEYPAIR }}
+        run: |
+          if [ -z "$DEVNET_PROGRAM_KEYPAIR" ]; then
+            echo "DEVNET_PROGRAM_KEYPAIR secret is not set. Set it in repo Settings > Secrets and variables > Actions before running this workflow."
+            exit 1
+          fi
+          mkdir -p target/deploy
+          printf '%s' "$DEVNET_PROGRAM_KEYPAIR" > target/deploy/solana_meme_coin-keypair.json
+          chmod 600 target/deploy/solana_meme_coin-keypair.json
+          # Sanity check: confirm the pubkey matches what's already synced
+          # in lib.rs/Anchor.toml, WITHOUT ever printing the private key.
+          ACTUAL=$(solana-keygen pubkey target/deploy/solana_meme_coin-keypair.json)
+          EXPECTED="EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N"
+          echo "Program pubkey from secret: $ACTUAL"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "MISMATCH: secret's pubkey ($ACTUAL) does not match the program ID already synced in this repo ($EXPECTED)."
+            echo "Refusing to deploy - this would deploy under the wrong program ID, or the secret contains the wrong keypair."
+            exit 1
+          fi
+
+      - name: Generate disposable payer wallet + fund via devnet faucet
+        run: |
+          solana-keygen new --no-bip39-passphrase --silent -o "$HOME/.config/solana/id.json"
+          solana config set --url devnet --keypair "$HOME/.config/solana/id.json"
+          PAYER=$(solana address)
+          echo "Disposable payer wallet (devnet only, discarded after this run): $PAYER"
+
+          # Devnet faucet is rate-limited per request; loop with backoff
+          # until there's enough SOL for a program deploy (~3 SOL is a
+          # safe margin for this program's size).
+          TARGET_LAMPORTS=3000000000
+          for i in $(seq 1 10); do
+            BALANCE=$(solana balance --lamports | awk '{print $1}')
+            echo "Attempt $i: current balance = $BALANCE lamports"
+            if [ "$BALANCE" -ge "$TARGET_LAMPORTS" ]; then
+              echo "Sufficiently funded."
+              break
+            fi
+            solana airdrop 2 || echo "Airdrop request failed/rate-limited, will retry"
+            sleep 15
+          done
+
+          FINAL_BALANCE=$(solana balance --lamports | awk '{print $1}')
+          if [ "$FINAL_BALANCE" -lt "$TARGET_LAMPORTS" ]; then
+            echo "Could not accumulate enough devnet SOL after 10 attempts (have $FINAL_BALANCE, need ~$TARGET_LAMPORTS). Devnet faucet may be rate-limiting this runner's IP. Try re-running later, or fund the wallet manually and adjust this workflow."
+            exit 1
+          fi
+
+      - name: Deploy to devnet
+        run: |
+          anchor deploy --provider.cluster devnet --provider.wallet "$HOME/.config/solana/id.json"
+
+      - name: Verify on-chain deployment
+        run: |
+          solana program show EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N --url devnet
+
+      - name: Summary
+        run: |
+          echo "Deployed program EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N to devnet."
+          echo "Explorer: https://explorer.solana.com/address/EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N?cluster=devnet"
+          echo "The disposable payer wallet used for this run is gone with the runner - it was never persisted."
