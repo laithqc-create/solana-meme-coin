@@ -1,5 +1,51 @@
 # Project Progress
 
+## MILESTONE: DEVNET DEPLOY CONFIRMED - real on-chain, not just workflow self-report
+
+Deployed via `.github/workflows/deploy-devnet.yml`, run against commit
+`5409e05` on `claude-session-fixes`. Verified via a live query against
+devnet's own RPC (`solana program show`, not just trusting the deploy
+command's exit code):
+
+```
+Program Id: EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N
+Owner: BPFLoaderUpgradeab1e11111111111111111111111
+ProgramData Address: 22v5EueXp1b2Xp9DAYoUiQWB2X9RdnAfq6dVsN2wAQdn
+Authority: B4oEVq6jSzqjJz9wXjDPSgBToK9BTw8LTjfQYrXd4Egw
+Last Deployed In Slot: 476186173
+Data Length: 426640 (0x68290) bytes
+Balance: 2.97061848 SOL
+```
+
+`Owner: BPFLoaderUpgradeab1e11111111111111111111111` confirms this is a
+real upgradeable program (not a placeholder/empty account).
+`Authority: B4oEVq6jSzqjJz9wXjDPSgBToK9BTw8LTjfQYrXd4Egw` correctly
+matches the persistent devnet payer wallet. `Data Length: 426640 bytes`
+confirms actual compiled bytecode landed on-chain.
+
+**Real path this took** (worth remembering for the mainnet version of this
+same workflow later):
+1. First devnet-deploy workflow attempt used ephemeral generate+airdrop
+   payer - failed 10/10 airdrop attempts, GitHub-hosted runners' shared
+   IPs are rate-limited by devnet's CLI airdrop endpoint.
+2. Switched to a PERSISTENT payer wallet (keypair generated locally,
+   funded once via the web faucet at faucet.solana.com - captcha-based,
+   not IP-limited - then stored as a `DEVNET_PAYER_KEYPAIR` repo secret).
+   This is now reusable for every future devnet deploy, no more
+   rate-limiting fights.
+3. First run with the persistent payer still failed - workflow jumped
+   straight to `anchor deploy` without ever running `anchor build` first
+   (fresh runner checkout each time, no cached `.so`). Added the missing
+   build step.
+4. Second run with the build step: SUCCESS, fully verified above.
+
+This completes item 1 of the "100% devnet" checklist. **Real remaining
+items**: the Raydium CPMM `seed_liquidity_pool` instruction, the 30%
+DEX-liquidity vault, `swap-ui/.env`, `RecordPriceSnapshot` vault lockdown,
+the full end-to-end devnet test sequence, and the local-validator
+integration test suite (see checklist below - none of this is done yet,
+only the deploy itself is confirmed).
+
 ## MILESTONE: anchor-lang 0.32.1 bump CONFIRMED WORKING - full CI green
 
 Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29235257382
@@ -462,15 +508,15 @@ before Phase B work starts. Do not start Phase B work until Phase A's
 checklist below is fully checked off AND Phase B's scope is confirmed.
 
 ## Current file being worked on
-- Nothing in progress - next action is devnet deploy (Phase A, item 1
-  below).
+- Nothing in progress - devnet deploy is DONE and verified (see milestone
+  above). Next action is the `seed_liquidity_pool` instruction (Phase A,
+  item 2 below).
 
 ## Exact next steps (in order) - this IS the "100% devnet" checklist
-1. **Devnet deploy**: `anchor deploy --provider.cluster devnet`. Needs a
-   funded devnet wallet (`solana airdrop`) and the real program keypair
-   (already generated, downloaded by user) as signer. NOT DONE YET -
-   nothing has touched a live cluster so far, only local/CI build
-   verification.
+1. ~~**Devnet deploy**~~ - DONE, confirmed via live `solana program show`
+   query against devnet's own RPC (see milestone above for full output).
+   Program `EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N` is real,
+   upgradeable, and live on devnet as of slot 476186173.
 2. **Build the `seed_liquidity_pool` instruction** using `raydium-cpmm-cpi`
    (git: `raydium-io/raydium-cpi`, `cpi` feature, `anchor-lang = "=0.32.1"`
    already matches what's pinned in this repo) - gated on
@@ -536,14 +582,19 @@ checklist below is fully checked off AND Phase B's scope is confirmed.
    Do not re-litigate either unless something material changes.
 3. Program keypair is real and synced: `EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N`
    (both lib.rs declare_id! and Anchor.toml's devnet + localnet entries).
-4. Next real action: **devnet deploy**
-   (`anchor deploy --provider.cluster devnet`) - needs a funded devnet
-   wallet (`solana airdrop`). This hasn't happened yet - only the local
-   build has been verified via CI, nothing has touched an actual cluster.
-5. After a successful devnet deploy: build the `seed_liquidity_pool`
-   instruction using `raydium-cpmm-cpi` (git dependency on
-   raydium-io/raydium-cpi, `anchor-lang = "=0.32.1"` matches what's
-   already pinned here), gated on `presale_state.sold_out`.
+4. **Devnet deploy is DONE and CONFIRMED** via a live `solana program show`
+   query against devnet's own RPC - not just a self-reported success.
+   Program is real, upgradeable, deployed at slot 476186173. Deployed via
+   `.github/workflows/deploy-devnet.yml`, which uses a PERSISTENT payer
+   wallet (`DEVNET_PAYER_KEYPAIR` secret, funded via the web faucet -
+   reusable for future redeploys without fighting devnet's CLI-airdrop
+   IP rate-limiting again).
+5. Next real action: build the `seed_liquidity_pool` instruction using
+   `raydium-cpmm-cpi` (git dependency on raydium-io/raydium-cpi,
+   `anchor-lang = "=0.32.1"` matches what's already pinned here), gated on
+   `presale_state.sold_out`. This also needs the 30% DEX-liquidity vault
+   instruction (nothing custodies that allocation yet) built alongside/
+   before it - see checklist items 2-3 above.
 6. Separate open decision, still pending: merge `claude-session-fixes` to
-   `main` now vs. keep iterating on the branch through devnet deploy
-   first. Not blocking - revisit whenever convenient.
+   `main` now vs. keep iterating on the branch. Not blocking - revisit
+   whenever convenient.
