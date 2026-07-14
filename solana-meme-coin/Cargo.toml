@@ -21,6 +21,14 @@ anchor-lang = { version = "=0.32.1", features = ["init-if-needed"] }
 anchor-spl = { version = "=0.32.1", features = ["token_2022"] }
 spl-tlv-account-resolution = "0.9.0"
 spl-transfer-hook-interface = "0.9.0"
+# Raydium's own CPI adapter for their CPMM program - deliberately pinned to
+# exactly anchor-lang/anchor-spl 0.32.1 (see raydium-io/raydium-cpi's own
+# README: they intentionally lag Anchor's newest releases for AMM contract
+# stability). Verified directly from source (cloned the repo rather than
+# trusting a blog) that the real package name IS raydium-cpmm-cpi with
+# [lib] name = "raydium_cpmm_cpi" - not raydium_cp_swap, which several
+# older/community examples online still use for a now-superseded crate.
+raydium-cpmm-cpi = { git = "https://github.com/raydium-io/raydium-cpi", package = "raydium-cpmm-cpi" }
 
 # The following pins work around a known, currently-open gap in Solana's
 # official BPF build toolchain: cargo-build-sbf bundles its own pinned

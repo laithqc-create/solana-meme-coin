@@ -5,10 +5,12 @@ pub mod curve;
 pub mod transfer_hook;
 pub mod vesting;
 pub mod presale;
+pub mod liquidity;
 
 use transfer_hook::*;
 use vesting::*;
 use presale::*;
+use liquidity::*;
 
 declare_id!("EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N");
 
@@ -75,6 +77,14 @@ pub mod solana_meme_coin {
 
     pub fn finalize_investor_vesting(ctx: Context<FinalizeInvestorVesting>) -> Result<()> {
         presale::finalize_investor_vesting(ctx)
+    }
+
+    // ========================================
+    // Liquidity Instructions
+    // ========================================
+
+    pub fn seed_liquidity_pool(ctx: Context<SeedLiquidityPool>, open_time: u64) -> Result<()> {
+        liquidity::seed_liquidity_pool(ctx, open_time)
     }
 }
 

@@ -1,6 +1,79 @@
 # Project Progress
 
-## MILESTONE: DEVNET DEPLOY CONFIRMED - real on-chain, not just workflow self-report
+## MILESTONE: seed_liquidity_pool instruction written - real Raydium interface verified from source, NOT CI-tested yet
+
+**Verification method** (per defi-blueprint skill - never invent library
+API details from memory): cloned `raydium-io/raydium-cpi` directly into
+the sandbox (`git clone`, not a blog/memory) and read the actual
+`programs/cpmm-cpi/src/{lib.rs,context.rs,states.rs}` source. Confirmed:
+- Real package name `raydium-cpmm-cpi` has `[lib] name = "raydium_cpmm_cpi"`
+  - NOT `raydium_cp_swap`, which several older/community examples for
+  earlier Anchor versions still use for what turns out to be a different,
+  superseded crate.
+- Real instruction name is `initialize` (`Context<Initialize>`), not
+  `InitializeCpmm` - that name only appears in an unofficial third-party
+  "pinocchio" helper crate, not Raydium's own.
+- Got the exact real `Initialize` accounts struct field-by-field
+  (`creator, amm_config, authority, pool_state, token_0_mint, token_1_mint,
+  lp_mint, creator_token_0, creator_token_1, creator_lp_token,
+  token_0_vault, token_1_vault, create_pool_fee, observation_state,
+  token_program, token_0_program, token_1_program,
+  associated_token_program, system_program, rent`) and the real PDA seed
+  formulas for every Raydium-owned account (`POOL_SEED`,
+  `POOL_LP_MINT_SEED`, `POOL_VAULT_SEED`, `OBSERVATION_SEED`, `AUTH_SEED`).
+
+**Design decisions made, with reasoning**:
+- Raydium enforces `token_0_mint.key() < token_1_mint.key()` - not knowable
+  at compile time (depends on our specific deployed mint's pubkey vs
+  WSOL's fixed pubkey), so ALL Raydium-owned PDA accounts are
+  `UncheckedAccount` in our struct (matching Raydium's own official CPI
+  example's convention) and verified imperatively in the instruction body
+  via `Pubkey::find_program_address`, branching on the actual runtime
+  comparison - not via Anchor's declarative `seeds = [...]`, which can't
+  easily express conditional ordering.
+- New `dex_liquidity_vault` (30% DEX allocation) added to
+  `InitializePresale`, funded off-chain by the admin exactly like
+  `presale_vault` already is (no on-chain minting exists anywhere in this
+  program - confirmed via grep before assuming otherwise).
+- New shared `pool_creator_authority` PDA (empty, seeds only) added
+  because Raydium's `creator` field must be both a Signer (via
+  `invoke_signed`) AND the token::authority of BOTH funding vaults
+  simultaneously - a self-authorizing vault (like presale_vault's own
+  pattern) can't satisfy that for two DIFFERENT vaults at once.
+- Presale's collected SOL (in `presale_treasury`, a plain system-owned
+  PDA) is wrapped into WSOL via a direct lamport transfer +
+  `sync_native` - the whole treasury balance is drained, since nothing
+  needs that PDA to survive afterward.
+- `amm_config` and `create_pool_fee` are passed in as caller-supplied
+  accounts, NOT hardcoded - two different sources gave inconsistent
+  devnet program IDs for Raydium CPMM (raydium-cpi-example's README says
+  `CPMDWBwJDtYax9qW7AyRuVC19Cc4L4Vcy4n2BHAbHkCW`, while raydium-cpmm-cpi's
+  own `declare_id!` under its `devnet` feature says
+  `DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb`) - rather than guess which
+  is current, the caller supplies the correct addresses for whatever
+  cluster/deployment they're actually targeting.
+- Added `PresaleState.liquidity_seeded: bool` to prevent double-calling
+  (updated space calc, `initialize_presale` sets it false).
+- New error variants in `errors.rs`: `PresaleNotSoldOut`,
+  `LiquidityAlreadySeeded`, and one mismatch variant per manually-verified
+  Raydium PDA (`PoolStateMismatch`, `LpMintMismatch`, `TokenVaultMismatch`,
+  `ObservationStateMismatch`, `RaydiumAuthorityMismatch`).
+
+**Known open assumption, flagged for review, not yet verified**:
+`open_time` is passed as a caller-supplied parameter rather than hardcoded
+- common convention elsewhere is `0` for "tradeable immediately," but this
+  wasn't independently confirmed against Raydium's actual runtime
+  behavior for that value. Low risk (a timestamp gate, not a fund-custody
+  parameter), but worth double-checking before relying on it.
+
+**NOT yet verified**: local `cargo check` only confirmed the dependency
+graph resolves (including the new `raydium-cpmm-cpi` git dependency) -
+the sandbox's `rustc 1.75` hits the same known MSRV ceiling as before
+(`borsh` needing `1.77`, which real CI's `1.84.1` already satisfies)
+before ever reaching our own code. **This instruction's actual
+compilation has not been tested yet** - next action is pushing to CI and
+treating the first result as a real, likely-imperfect first attempt, not
+a finished implementation.
 
 Deployed via `.github/workflows/deploy-devnet.yml`, run against commit
 `5409e05` on `claude-session-fixes`. Verified via a live query against

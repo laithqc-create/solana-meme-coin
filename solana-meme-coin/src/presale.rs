@@ -13,6 +13,7 @@ pub fn initialize_presale(ctx: Context<InitializePresale>) -> Result<()> {
     presale_state.total_sol_raised = 0;
     presale_state.sold_out = false;
     presale_state.is_tge_active = false;
+    presale_state.liquidity_seeded = false;
     Ok(())
 }
 
@@ -193,7 +194,7 @@ pub struct InitializePresale<'info> {
     #[account(
         init,
         payer = admin,
-        space = 8 + 32 + 8 + 8 + 1 + 1,
+        space = 8 + 32 + 8 + 8 + 1 + 1 + 1,
         seeds = [b"presale_state"],
         bump
     )]
@@ -208,6 +209,28 @@ pub struct InitializePresale<'info> {
         token::token_program = token_program,
     )]
     pub presale_vault: InterfaceAccount<'info, TokenAccount>,
+    /// Holds the 30% DEX-liquidity token allocation. Created empty here,
+    /// same as presale_vault - the admin funds it off-chain (transfer from
+    /// the pre-minted supply) before the presale sells out. Authority is
+    /// NOT itself (unlike presale_vault) because `liquidity::seed_liquidity_pool`
+    /// needs a single PDA that can simultaneously act as authority over
+    /// this vault, authority over the WSOL vault, AND the CPI "creator"
+    /// signer for Raydium's initialize instruction - see liquidity.rs.
+    #[account(
+        init,
+        payer = admin,
+        seeds = [b"dex_liquidity_vault"],
+        bump,
+        token::mint = mint,
+        token::authority = pool_creator_authority,
+        token::token_program = token_program,
+    )]
+    pub dex_liquidity_vault: InterfaceAccount<'info, TokenAccount>,
+    /// CHECK: empty PDA, no data - exists solely to be a signable authority
+    /// (via invoke_signed) for the DEX-liquidity vault, a WSOL vault created
+    /// later in seed_liquidity_pool, and Raydium's CPI "creator" field.
+    #[account(seeds = [b"pool_creator_authority"], bump)]
+    pub pool_creator_authority: AccountInfo<'info>,
     pub mint: InterfaceAccount<'info, Mint>,
     #[account(mut)]
     pub admin: Signer<'info>,
@@ -287,6 +310,7 @@ pub struct PresaleState {
     pub total_sol_raised: u64,
     pub sold_out: bool,
     pub is_tge_active: bool,
+    pub liquidity_seeded: bool,
 }
 
 #[account]

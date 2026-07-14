@@ -52,6 +52,22 @@ pub enum MemeCoinError {
     #[msg("Single purchase exceeds the maximum allowed SOL per transaction")]
     PurchaseExceedsMaxPerTx,
 
+    // --- liquidity.rs ---
+    #[msg("Presale has not sold out yet - liquidity cannot be seeded until then")]
+    PresaleNotSoldOut,
+    #[msg("Liquidity has already been seeded for this presale")]
+    LiquidityAlreadySeeded,
+    #[msg("Provided pool_state account does not match the expected Raydium CPMM PDA")]
+    PoolStateMismatch,
+    #[msg("Provided lp_mint account does not match the expected Raydium CPMM PDA")]
+    LpMintMismatch,
+    #[msg("Provided token vault account does not match the expected Raydium CPMM PDA")]
+    TokenVaultMismatch,
+    #[msg("Provided observation_state account does not match the expected Raydium CPMM PDA")]
+    ObservationStateMismatch,
+    #[msg("Provided Raydium authority account does not match the expected Raydium CPMM PDA")]
+    RaydiumAuthorityMismatch,
+
     // --- shared across all modules ---
     #[msg("Math overflow")]
     MathOverflow,
