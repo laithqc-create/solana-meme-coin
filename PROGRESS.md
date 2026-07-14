@@ -1,5 +1,30 @@
 # Project Progress
 
+## MILESTONE: seed_liquidity_pool CI-CONFIRMED - both cargo check AND anchor build passed, first attempt
+
+Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29367477487
+(overall conclusion: `success`, confirmed via Actions API directly)
+
+The CPI account struct wiring, PDA seed-formula verification logic, and
+token_0/token_1 runtime-ordering branch all compiled correctly against the
+real Solana BPF toolchain on the first real attempt - the upfront research
+(cloning raydium-io/raydium-cpi and reading actual source rather than
+guessing) paid off here compared to the anchor-lang 0.32.1 bump earlier,
+which took 4 real CI round-trips.
+
+**Still NOT done - this is compile-verified only, not behavior-verified**:
+no test has actually invoked this instruction against a running validator
+or devnet cluster yet. Real remaining risks that only a live invocation
+would catch: whether the actual on-chain Raydium program's own internal
+validation accepts what we're sending (our manual PDA checks replicate
+the formula but don't guarantee we've got init_amount_0/init_amount_1 or
+open_time semantics exactly right), and whether the WSOL-wrapping +
+sync_native sequence produces the exact balance Raydium's inner
+instruction expects to pull. This needs a real devnet invocation (or at
+minimum a local-validator anchor test with cloned Raydium accounts, which
+Raydium's own docs describe doing for exactly this kind of integration
+testing) before treating it as functionally correct, not just compiling.
+
 ## MILESTONE: seed_liquidity_pool instruction written - real Raydium interface verified from source, NOT CI-tested yet
 
 **Verification method** (per defi-blueprint skill - never invent library
