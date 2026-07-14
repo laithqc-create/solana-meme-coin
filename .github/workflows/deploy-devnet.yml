@@ -103,6 +103,10 @@ jobs:
             exit 1
           fi
 
+      - name: Build program
+        run: |
+          anchor build
+
       - name: Deploy to devnet
         run: |
           anchor deploy --provider.cluster devnet --provider.wallet "$HOME/.config/solana/id.json"
