@@ -4,16 +4,20 @@ name: Deploy to Devnet
 #   - The REAL program keypair, reconstructed from the DEVNET_PROGRAM_KEYPAIR
 #     repo secret (never printed, never committed - exists only in the
 #     runner's ephemeral filesystem for the duration of this job).
-#   - A FRESH, disposable payer/fee wallet generated on the runner each run
-#     and funded via devnet's free faucet. This wallet has zero value
-#     outside this run and is never persisted anywhere.
+#   - A PERSISTENT payer/fee wallet, reconstructed from the
+#     DEVNET_PAYER_KEYPAIR repo secret. This wallet is devnet-only, holds
+#     zero real value, and is pre-funded via the web faucet (which uses a
+#     captcha, not IP-based rate limiting) specifically so this workflow
+#     never has to fight GitHub-hosted runners' shared IPs getting
+#     rate-limited by the devnet CLI airdrop endpoint.
 #
 # SECURITY NOTE:
-# DEVNET_PROGRAM_KEYPAIR must be set directly in GitHub's UI
-# (Settings -> Secrets and variables -> Actions), never pasted in chat or
-# committed to the repo. This is the program's real upgrade authority -
-# even on devnet, treat the habit of handling it correctly as practice for
-# the mainnet version of this same workflow later.
+# Both DEVNET_PROGRAM_KEYPAIR and DEVNET_PAYER_KEYPAIR must be set directly
+# in GitHub's UI (Settings -> Secrets and variables -> Actions), never
+# pasted in chat or committed to the repo. DEVNET_PROGRAM_KEYPAIR is the
+# program's real upgrade authority - even on devnet, treat the habit of
+# handling it correctly as practice for the mainnet version of this same
+# workflow later. DEVNET_PAYER_KEYPAIR holds only worthless devnet SOL.
 
 on:
   workflow_dispatch:
@@ -77,31 +81,25 @@ jobs:
             exit 1
           fi
 
-      - name: Generate disposable payer wallet + fund via devnet faucet
+      - name: Reconstruct persistent, pre-funded payer wallet from secret
+        env:
+          DEVNET_PAYER_KEYPAIR: ${{ secrets.DEVNET_PAYER_KEYPAIR }}
         run: |
-          solana-keygen new --no-bip39-passphrase --silent -o "$HOME/.config/solana/id.json"
+          if [ -z "$DEVNET_PAYER_KEYPAIR" ]; then
+            echo "DEVNET_PAYER_KEYPAIR secret is not set. Set it in repo Settings > Secrets and variables > Actions - fund it via https://faucet.solana.com first (select Devnet)."
+            exit 1
+          fi
+          mkdir -p "$HOME/.config/solana"
+          printf '%s' "$DEVNET_PAYER_KEYPAIR" > "$HOME/.config/solana/id.json"
+          chmod 600 "$HOME/.config/solana/id.json"
           solana config set --url devnet --keypair "$HOME/.config/solana/id.json"
           PAYER=$(solana address)
-          echo "Disposable payer wallet (devnet only, discarded after this run): $PAYER"
-
-          # Devnet faucet is rate-limited per request; loop with backoff
-          # until there's enough SOL for a program deploy (~3 SOL is a
-          # safe margin for this program's size).
-          TARGET_LAMPORTS=3000000000
-          for i in $(seq 1 10); do
-            BALANCE=$(solana balance --lamports | awk '{print $1}')
-            echo "Attempt $i: current balance = $BALANCE lamports"
-            if [ "$BALANCE" -ge "$TARGET_LAMPORTS" ]; then
-              echo "Sufficiently funded."
-              break
-            fi
-            solana airdrop 2 || echo "Airdrop request failed/rate-limited, will retry"
-            sleep 15
-          done
-
-          FINAL_BALANCE=$(solana balance --lamports | awk '{print $1}')
-          if [ "$FINAL_BALANCE" -lt "$TARGET_LAMPORTS" ]; then
-            echo "Could not accumulate enough devnet SOL after 10 attempts (have $FINAL_BALANCE, need ~$TARGET_LAMPORTS). Devnet faucet may be rate-limiting this runner's IP. Try re-running later, or fund the wallet manually and adjust this workflow."
+          BALANCE=$(solana balance --lamports | awk '{print $1}')
+          echo "Payer wallet: $PAYER"
+          echo "Current balance: $BALANCE lamports"
+          MIN_LAMPORTS=1000000000
+          if [ "$BALANCE" -lt "$MIN_LAMPORTS" ]; then
+            echo "Balance too low for a safe deploy (need at least ~1 SOL as a margin). Fund $PAYER further at https://faucet.solana.com (select Devnet) and re-run."
             exit 1
           fi
 
@@ -117,4 +115,3 @@ jobs:
         run: |
           echo "Deployed program EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N to devnet."
           echo "Explorer: https://explorer.solana.com/address/EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N?cluster=devnet"
-          echo "The disposable payer wallet used for this run is gone with the runner - it was never persisted."
