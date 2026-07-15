@@ -1,0 +1,145 @@
+name: Setup Devnet Mint
+
+# Manual-only trigger. One-time (idempotent-ish) devnet bootstrap:
+#   1. Creates a real Token-2022 mint with the transfer-hook extension
+#      pointing at this program, decimals=9.
+#   2. Mints the full 1,000,000,000 supply to the payer's own wallet.
+#   3. Runs scripts/setup_devnet.ts: initialize_presale,
+#      initialize_extra_account_meta_list (placeholder dex_pool/marketing
+#      wallet - see script's own doc comment and PROGRESS.md), then
+#      transfers 300M to presale_vault and 300M to dex_liquidity_vault.
+#
+# Requires DEVNET_PROGRAM_KEYPAIR and DEVNET_PAYER_KEYPAIR repo secrets
+# (same ones deploy-devnet.yml uses) - set directly in GitHub's UI, never
+# via chat/API.
+#
+# The created mint address is printed at the end - that's what goes into
+# swap-ui/.env.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "setup" to confirm creating/funding the devnet mint'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  setup-devnet-mint:
+    if: ${{ github.event.inputs.confirm == 'setup' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard against accidental runs
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "setup" ]; then
+            echo "Confirmation input did not match 'setup'. Aborting."
+            exit 1
+          fi
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI (pinned, matches this repo's anchor-lang)
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          avm install 0.32.1
+          avm use 0.32.1
+
+      - name: Reconstruct real program keypair from secret
+        env:
+          DEVNET_PROGRAM_KEYPAIR: ${{ secrets.DEVNET_PROGRAM_KEYPAIR }}
+        run: |
+          if [ -z "$DEVNET_PROGRAM_KEYPAIR" ]; then
+            echo "DEVNET_PROGRAM_KEYPAIR secret is not set."
+            exit 1
+          fi
+          mkdir -p target/deploy
+          printf '%s' "$DEVNET_PROGRAM_KEYPAIR" > target/deploy/solana_meme_coin-keypair.json
+          chmod 600 target/deploy/solana_meme_coin-keypair.json
+          ACTUAL=$(solana-keygen pubkey target/deploy/solana_meme_coin-keypair.json)
+          echo "PROGRAM_ID=$ACTUAL" >> "$GITHUB_ENV"
+          echo "Program ID: $ACTUAL"
+
+      - name: Reconstruct persistent, pre-funded payer wallet from secret
+        env:
+          DEVNET_PAYER_KEYPAIR: ${{ secrets.DEVNET_PAYER_KEYPAIR }}
+        run: |
+          if [ -z "$DEVNET_PAYER_KEYPAIR" ]; then
+            echo "DEVNET_PAYER_KEYPAIR secret is not set."
+            exit 1
+          fi
+          mkdir -p "$HOME/.config/solana"
+          printf '%s' "$DEVNET_PAYER_KEYPAIR" > "$HOME/.config/solana/id.json"
+          chmod 600 "$HOME/.config/solana/id.json"
+          solana config set --url devnet --keypair "$HOME/.config/solana/id.json"
+          BALANCE=$(solana balance --lamports | awk '{print $1}')
+          echo "Payer balance: $BALANCE lamports"
+          if [ "$BALANCE" -lt 500000000 ]; then
+            echo "Balance too low (need at least ~0.5 SOL). Fund via https://faucet.solana.com (select Devnet) and re-run."
+            exit 1
+          fi
+
+      - name: Build program (generates IDL)
+        run: |
+          anchor build
+
+      - name: Create Token-2022 mint with transfer-hook extension
+        run: |
+          MINT_KEYPAIR=$(mktemp)
+          solana-keygen new --no-bip39-passphrase --silent -o "$MINT_KEYPAIR"
+          MINT_ADDRESS=$(solana-keygen pubkey "$MINT_KEYPAIR")
+          echo "MINT_ADDRESS=$MINT_ADDRESS" >> "$GITHUB_ENV"
+          echo "Creating mint: $MINT_ADDRESS"
+          spl-token --program-id TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb \
+            create-token \
+            --transfer-hook "$PROGRAM_ID" \
+            --decimals 9 \
+            --url devnet \
+            "$MINT_KEYPAIR"
+
+      - name: Create payer ATA and mint full supply
+        run: |
+          spl-token --program-id TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb \
+            create-account "$MINT_ADDRESS" --url devnet
+          spl-token --program-id TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb \
+            mint "$MINT_ADDRESS" 1000000000 --url devnet
+
+      - name: Run devnet setup script
+        working-directory: scripts
+        env:
+          RPC_URL: https://api.devnet.solana.com
+          PAYER_KEYPAIR_PATH: /home/runner/.config/solana/id.json
+          PROGRAM_ID: ${{ env.PROGRAM_ID }}
+          MINT_ADDRESS: ${{ env.MINT_ADDRESS }}
+          IDL_PATH: ../target/idl/solana_meme_coin.json
+        run: |
+          npm install
+          npx ts-node setup_devnet.ts
+
+      - name: Summary
+        run: |
+          echo "=================================================="
+          echo "Mint created: $MINT_ADDRESS"
+          echo "This is the address to put in swap-ui/.env as VITE_MEME_COIN_MINT_ADDRESS"
+          echo "Explorer: https://explorer.solana.com/address/$MINT_ADDRESS?cluster=devnet"
+          echo "=================================================="
+          echo "REMINDER: dex_pool and marketing_wallet in the transfer hook's"
+          echo "extra_account_meta_list are PLACEHOLDERS (the payer's own wallet)."
+          echo "Call update_dex_pool with the real pool token vault once"
+          echo "seed_liquidity_pool has actually run."

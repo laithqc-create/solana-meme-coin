@@ -1,0 +1,19 @@
+{
+  "name": "solana-meme-coin-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-off operational scripts for devnet setup - not part of the on-chain program or swap-ui.",
+  "scripts": {
+    "setup-devnet": "ts-node setup_devnet.ts"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.7.5"
+  }
+}
