@@ -100,6 +100,53 @@ compilation has not been tested yet** - next action is pushing to CI and
 treating the first result as a real, likely-imperfect first attempt, not
 a finished implementation.
 
+## MILESTONE: Two real pre-existing bugs found and fixed in transfer_hook.rs
+
+While tracing the mint-setup flow needed for `swap-ui/.env` (item 4),
+found two genuine gaps in code that predates this session - not new
+issues introduced by this work, but real problems that would have
+surfaced the first time anyone actually tried to use the transfer hook.
+
+**Bug 1 - the ExtraAccountMetaList PDA was never actually created.**
+`InitializeExtraAccountMetaList`'s `payer: Signer` field existed but was
+never used. The handler called `.realloc()` and `ExtraAccountMetaList::init()`
+directly on the PDA without ever creating it first via a `create_account`
+CPI - `.realloc()` requires the calling program to already own the
+account, but a fresh, never-created PDA defaults to System-Program-owned
+with zero size. This would have failed the first real call. Fixed: added
+an explicit `system_program::create_account` CPI (funded by `payer`,
+owned by this program, sized via `ExtraAccountMetaList::size_of`,
+signed via the PDA's own seeds) before the init call. Also added
+`presale_state`-based admin gating to this instruction, which previously
+had none - anyone could have called it.
+
+**Bug 2 - no way to ever correct `dex_pool` after the real pool exists.**
+`dex_pool` gates the entire tax mechanism (`is_dex_trade` check in
+`transfer_hook`'s `execute`) - if it's ever wrong, the 1% DEX tax (the
+project's entire stated revenue model) silently never activates, for
+transfers that don't match it. This matters because of a genuine
+ordering problem: `initialize_extra_account_meta_list` must run (Token-
+2022 requires the ExtraAccountMetaList account to exist for ANY transfer
+of a hook-enabled mint to succeed, including presale-phase transfers)
+long before the real Raydium pool exists (`seed_liquidity_pool` only runs
+after presale sellout). So `dex_pool` necessarily starts as a placeholder,
+and there was no instruction anywhere to fix it afterward - a real design
+gap, not a devnet-only nuisance.
+
+Fixed by adding a new admin-gated `update_dex_pool` instruction, verified
+against the real `spl-tlv-account-resolution` crate source (cloned
+`solana-program/libraries` directly - `ExtraAccountMetaList::update::<T>`
+exists with the same signature shape as `init`, confirmed rather than
+assumed). **Operational consequence to remember**: after
+`seed_liquidity_pool` creates the real pool, `update_dex_pool` MUST be
+called with the correct token vault address (the vault holding THIS
+mint specifically - `token_0_vault` or `token_1_vault`, whichever
+matches, NOT the `pool_state` account) before the tax mechanism is live.
+This is now an explicit step in the end-to-end test sequence - previously
+this step didn't exist at all anywhere in the plan.
+
+## MILESTONE: Devnet deploy confirmed - real on-chain, not just workflow self-report
+
 Deployed via `.github/workflows/deploy-devnet.yml`, run against commit
 `5409e05` on `claude-session-fixes`. Verified via a live query against
 devnet's own RPC (`solana program show`, not just trusting the deploy
@@ -615,28 +662,25 @@ checklist below is fully checked off AND Phase B's scope is confirmed.
    query against devnet's own RPC (see milestone above for full output).
    Program `EkF67nLhbAzj45Sv3ggYRLq5NLUXrp1bLei2h4APGJ3N` is real,
    upgradeable, and live on devnet as of slot 476186173.
-2. **Build the `seed_liquidity_pool` instruction** using `raydium-cpmm-cpi`
-   (git: `raydium-io/raydium-cpi`, `cpi` feature, `anchor-lang = "=0.32.1"`
-   already matches what's pinned in this repo) - gated on
-   `presale_state.sold_out == true`, CPIs the collected SOL out of the
-   `presale_treasury` PDA (as signer, via `invoke_signed`) plus the 30%
-   DEX-liquidity token allocation into a new Raydium CPMM pool
-   (`InitializeCpmm`).
-3. **The 30% DEX-liquidity token allocation still isn't custodied
-   anywhere** - needs its own instruction (likely at `initialize_presale`
-   time) transferring 30% of total supply into a PDA-owned vault analogous
-   to `presale_treasury`, before item 2 has tokens to deposit alongside
-   the SOL.
+2. ~~**Build the `seed_liquidity_pool` instruction**~~ - DONE, CI-verified
+   (see milestone above). Includes the 30% DEX-liquidity vault (item 3,
+   folded into the same work) - `dex_liquidity_vault` added to
+   `InitializePresale`, funded off-chain by the admin same as
+   `presale_vault`. NOT yet behavior-tested against a live Raydium
+   program - compile-verified only.
+3. ~~**30% DEX-liquidity vault**~~ - DONE, see item 2 above.
 4. **Fill in `swap-ui/.env`** with the real deployed mint address,
    marketing wallet address, decimals, and devnet RPC URL.
 5. **Hardcode real pool vault pubkeys** into `RecordPriceSnapshot`'s
    account constraints in `vesting.rs` - currently accepts ANY two token
-   accounts. Blocked until item 2 (liquidity actually deployed to a pool).
+   accounts. Blocked until liquidity is actually seeded into a real pool
+   on-chain (item 2's code exists, but hasn't been invoked yet).
 6. **Full end-to-end test on devnet**: initialize_presale -> buy_tokens
    (repeatedly, exercising the curve's full range, including the exact-
    sellout capping case) -> activate_tge -> claim_tge ->
    initialize_vesting (client-side, 90% of allocation) ->
    finalize_investor_vesting -> wait past cliff -> release_vesting ->
+   seed_liquidity_pool (first real invocation) ->
    simulate a 30%+ price drop via record_price_snapshot +
    check_and_trigger_volatility_delay -> confirm the 7-day delay applies ->
    confirm the NEXT month's release is still on the original calendar grid

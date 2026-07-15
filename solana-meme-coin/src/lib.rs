@@ -51,6 +51,10 @@ pub mod solana_meme_coin {
         transfer_hook::initialize_extra_account_meta_list(ctx)
     }
 
+    pub fn update_dex_pool(ctx: Context<UpdateDexPool>) -> Result<()> {
+        transfer_hook::update_dex_pool(ctx)
+    }
+
     pub fn transfer_hook(ctx: Context<TransferHook>, amount: u64) -> Result<()> {
         transfer_hook::transfer_hook(ctx, amount)
     }

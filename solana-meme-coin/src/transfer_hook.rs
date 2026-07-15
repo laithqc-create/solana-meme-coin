@@ -52,16 +52,65 @@ pub fn initialize_extra_account_meta_list(
     ];
 
     let account_size = ExtraAccountMetaList::size_of(account_metas.len())? as u64;
-    ctx.accounts
-        .extra_account_meta_list
-        .to_account_info()
-        .realloc(account_size as usize, false)?;
+
+    // BUG FIX: this PDA was never actually created before - `payer` was
+    // declared in the accounts struct but never used, and `.realloc()`
+    // below would fail on a fresh, System-owned, zero-size account since
+    // realloc requires the calling program to already own the account.
+    // Create it properly here, funded by `payer`, owned by this program.
+    let mint_key = ctx.accounts.mint.key();
+    let bump = ctx.bumps.extra_account_meta_list;
+    let seeds: &[&[u8]] = &[b"extra-account-metas", mint_key.as_ref(), &[bump]];
+    let signer_seeds: &[&[&[u8]]] = &[seeds];
+    let rent = Rent::get()?;
+    let lamports = rent.minimum_balance(account_size as usize);
+    anchor_lang::system_program::create_account(
+        CpiContext::new_with_signer(
+            ctx.accounts.system_program.to_account_info(),
+            anchor_lang::system_program::CreateAccount {
+                from: ctx.accounts.payer.to_account_info(),
+                to: ctx.accounts.extra_account_meta_list.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        lamports,
+        account_size,
+        ctx.program_id,
+    )?;
 
     ExtraAccountMetaList::init::<ExecuteInstruction>(
         &mut ctx.accounts.extra_account_meta_list.try_borrow_mut_data()?,
         &account_metas,
     )?;
 
+    Ok(())
+}
+
+/// Corrects `dex_pool` after the fact once the real Raydium pool exists -
+/// necessary because `initialize_extra_account_meta_list` above must run
+/// (and therefore needs SOME dex_pool value) before ANY transfer of this
+/// mint can succeed at all, including the presale-phase transfers that
+/// happen long before the real pool exists via `seed_liquidity_pool`.
+/// Without this instruction, whatever placeholder was used at initial
+/// setup would silently remain wrong forever, and the 1% DEX tax - the
+/// project's entire revenue model - would never actually activate.
+/// Admin-gated: pass the real token vault (the one holding THIS mint,
+/// not the pool_state account) from the pool `seed_liquidity_pool` just
+/// created.
+pub fn update_dex_pool(ctx: Context<UpdateDexPool>) -> Result<()> {
+    let account_metas = vec![
+        ExtraAccountMeta::new_with_pubkey(&ctx.accounts.dex_pool.key(), false, false)?,
+        ExtraAccountMeta::new_with_pubkey(&ctx.accounts.marketing_wallet.key(), false, true)?,
+        ExtraAccountMeta::new_with_pubkey(
+            &anchor_lang::solana_program::sysvar::instructions::ID,
+            false,
+            false,
+        )?,
+    ];
+    ExtraAccountMetaList::update::<ExecuteInstruction>(
+        &mut ctx.accounts.extra_account_meta_list.try_borrow_mut_data()?,
+        &account_metas,
+    )?;
     Ok(())
 }
 
@@ -160,9 +209,13 @@ fn verify_sibling_fee_instruction(ctx: &Context<TransferHook>, required_fee: u64
 
 #[derive(Accounts)]
 pub struct InitializeExtraAccountMetaList<'info> {
-    #[account(mut)]
+    #[account(mut, address = presale_state.admin @ MemeCoinError::Unauthorized)]
     pub payer: Signer<'info>,
-    /// CHECK: PDA owned by this program, seeds validated below
+    #[account(seeds = [b"presale_state"], bump)]
+    pub presale_state: Account<'info, crate::presale::PresaleState>,
+    /// CHECK: PDA owned by this program, seeds validated below, created
+    /// manually in the handler (see bug-fix note there) - must NOT be an
+    /// existing account when this runs, since we create it fresh.
     #[account(
         mut,
         seeds = [b"extra-account-metas", mint.key().as_ref()],
@@ -172,10 +225,41 @@ pub struct InitializeExtraAccountMetaList<'info> {
     /// CHECK: the mint this hook is being attached to
     pub mint: AccountInfo<'info>,
     /// CHECK: known AMM pool address (base or quote vault / pool authority)
+    /// - almost certainly a PLACEHOLDER at initial setup time, since the
+    /// real pool doesn't exist yet at this point in the flow (see
+    /// update_dex_pool below, which must be called once it does).
     pub dex_pool: AccountInfo<'info>,
     /// CHECK: destination for collected tax
     pub marketing_wallet: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateDexPool<'info> {
+    #[account(address = presale_state.admin @ MemeCoinError::Unauthorized)]
+    pub admin: Signer<'info>,
+    #[account(seeds = [b"presale_state"], bump)]
+    pub presale_state: Account<'info, crate::presale::PresaleState>,
+    /// CHECK: PDA owned by this program, seeds validated - must already
+    /// exist (created by initialize_extra_account_meta_list earlier).
+    #[account(
+        mut,
+        seeds = [b"extra-account-metas", mint.key().as_ref()],
+        bump
+    )]
+    pub extra_account_meta_list: AccountInfo<'info>,
+    /// CHECK: the mint this hook is attached to
+    pub mint: AccountInfo<'info>,
+    /// CHECK: the REAL pool token vault (holding this mint specifically,
+    /// not the pool_state metadata account) - caller's responsibility to
+    /// pass the correct address, this instruction only rewrites the
+    /// stored value, it doesn't independently verify pool authenticity.
+    pub dex_pool: AccountInfo<'info>,
+    /// CHECK: must match whatever was set at initial setup - this
+    /// instruction doesn't change the marketing wallet, only dex_pool,
+    /// but ExtraAccountMetaList::update rewrites the whole list at once
+    /// so the correct existing value must be passed again.
+    pub marketing_wallet: AccountInfo<'info>,
 }
 
 #[derive(Accounts)]
