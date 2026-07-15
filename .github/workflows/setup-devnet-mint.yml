@@ -102,7 +102,7 @@ jobs:
       - name: Create Token-2022 mint with transfer-hook extension
         run: |
           MINT_KEYPAIR=$(mktemp)
-          solana-keygen new --no-bip39-passphrase --silent -o "$MINT_KEYPAIR"
+          solana-keygen new --no-bip39-passphrase --silent --force -o "$MINT_KEYPAIR"
           MINT_ADDRESS=$(solana-keygen pubkey "$MINT_KEYPAIR")
           echo "MINT_ADDRESS=$MINT_ADDRESS" >> "$GITHUB_ENV"
           echo "Creating mint: $MINT_ADDRESS"
