@@ -100,7 +100,10 @@ compilation has not been tested yet** - next action is pushing to CI and
 treating the first result as a real, likely-imperfect first attempt, not
 a finished implementation.
 
-## MILESTONE: Two real pre-existing bugs found and fixed in transfer_hook.rs
+## MILESTONE: Two real pre-existing bugs found and fixed in transfer_hook.rs - CI-CONFIRMED
+
+Run: https://github.com/laithqc-create/solana-meme-coin/actions/runs/29400069664
+(overall conclusion: `success`, both cargo check and anchor build green)
 
 While tracing the mint-setup flow needed for `swap-ui/.env` (item 4),
 found two genuine gaps in code that predates this session - not new
