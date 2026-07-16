@@ -104,6 +104,29 @@ async function main() {
   console.log("pool_creator_authority:", poolCreatorAuthority.toBase58());
   console.log("extra_account_meta_list:", extraAccountMetaList.toBase58());
 
+  // --- Guard against devnet RPC propagation lag ---
+  // api.devnet.solana.com is a load-balanced, multi-node public endpoint -
+  // a mint confirmed by one backend node isn't guaranteed to be instantly
+  // visible to whichever node handles the NEXT request, even a few
+  // seconds later. Poll until this specific connection can actually see
+  // it before submitting a transaction that depends on it existing.
+  console.log("\nWaiting for mint account to be visible to this RPC connection...");
+  const mintWaitStart = Date.now();
+  const mintWaitTimeoutMs = 60_000;
+  while (true) {
+    const info = await connection.getAccountInfo(mint, "confirmed");
+    if (info !== null) {
+      console.log(`  Mint visible after ${Date.now() - mintWaitStart}ms.`);
+      break;
+    }
+    if (Date.now() - mintWaitStart > mintWaitTimeoutMs) {
+      throw new Error(
+        `Mint account ${mint.toBase58()} still not visible to this RPC connection after ${mintWaitTimeoutMs}ms - this points to something more than ordinary propagation lag.`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+
   // --- Step 1: initialize_presale ---
   console.log("\n[1/3] Calling initialize_presale...");
   const existingPresale = await connection.getAccountInfo(presaleState);
