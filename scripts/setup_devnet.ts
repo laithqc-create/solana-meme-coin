@@ -114,16 +114,12 @@ async function main() {
   console.log("\nWaiting for mint account to be visible to this RPC connection...");
   const mintWaitStart = Date.now();
   const mintWaitTimeoutMs = 90_000;
+  let mintAccountInfo = null;
   while (true) {
-    // "finalized" (supermajority cluster consensus), not "confirmed"
-    // (single-node) - AccountNotInitialized happens during actual
-    // on-chain execution of our NEXT transaction, which could still land
-    // on a part of the cluster that hasn't seen a merely-"confirmed"
-    // mint yet. This is a stronger guarantee than the client-side
-    // getAccountInfo check alone provided.
     const info = await connection.getAccountInfo(mint, "finalized");
     if (info !== null) {
       console.log(`  Mint finalized after ${Date.now() - mintWaitStart}ms.`);
+      mintAccountInfo = info;
       break;
     }
     if (Date.now() - mintWaitStart > mintWaitTimeoutMs) {
@@ -133,6 +129,23 @@ async function main() {
     }
     await new Promise((resolve) => setTimeout(resolve, 3000));
   }
+
+  // --- Raw diagnostic dump - two identical failures despite timing fixes
+  // means this isn't a timing issue, so inspect the actual bytes rather
+  // than guess further ---
+  console.log("\n--- Mint account raw diagnostics ---");
+  console.log("Owner:", mintAccountInfo.owner.toBase58());
+  console.log("Data length:", mintAccountInfo.data.length);
+  console.log("Lamports:", mintAccountInfo.lamports);
+  const data = mintAccountInfo.data;
+  // Base Mint layout (both Token and Token-2022): mintAuthorityOption(4) +
+  // mintAuthority(32) + supply(8) + decimals(1) + isInitialized(1) +
+  // freezeAuthorityOption(4) + freezeAuthority(32) = 82 bytes, then any
+  // Token-2022 extension TLV data follows.
+  console.log("isInitialized byte (offset 45):", data.length > 45 ? data[45] : "N/A - data too short!");
+  console.log("decimals byte (offset 44):", data.length > 44 ? data[44] : "N/A");
+  console.log("First 90 bytes (hex):", data.subarray(0, Math.min(90, data.length)).toString("hex"));
+  console.log("--- end diagnostics ---\n");
 
   // --- Step 1: initialize_presale ---
   console.log("\n[1/3] Calling initialize_presale...");
