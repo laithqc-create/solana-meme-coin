@@ -60,12 +60,13 @@ async function main() {
   const mint = new PublicKey(requireEnv("MINT_ADDRESS"));
   const idlPath = requireEnv("IDL_PATH");
 
-  const connection = new Connection(rpcUrl, "confirmed");
+  const connection = new Connection(rpcUrl, "finalized");
   const payer = loadKeypair(payerPath);
 
   const wallet = new anchor.Wallet(payer);
   const provider = new anchor.AnchorProvider(connection, wallet, {
-    commitment: "confirmed",
+    commitment: "finalized",
+    preflightCommitment: "finalized",
   });
   anchor.setProvider(provider);
 
@@ -112,16 +113,22 @@ async function main() {
   // it before submitting a transaction that depends on it existing.
   console.log("\nWaiting for mint account to be visible to this RPC connection...");
   const mintWaitStart = Date.now();
-  const mintWaitTimeoutMs = 60_000;
+  const mintWaitTimeoutMs = 90_000;
   while (true) {
-    const info = await connection.getAccountInfo(mint, "confirmed");
+    // "finalized" (supermajority cluster consensus), not "confirmed"
+    // (single-node) - AccountNotInitialized happens during actual
+    // on-chain execution of our NEXT transaction, which could still land
+    // on a part of the cluster that hasn't seen a merely-"confirmed"
+    // mint yet. This is a stronger guarantee than the client-side
+    // getAccountInfo check alone provided.
+    const info = await connection.getAccountInfo(mint, "finalized");
     if (info !== null) {
-      console.log(`  Mint visible after ${Date.now() - mintWaitStart}ms.`);
+      console.log(`  Mint finalized after ${Date.now() - mintWaitStart}ms.`);
       break;
     }
     if (Date.now() - mintWaitStart > mintWaitTimeoutMs) {
       throw new Error(
-        `Mint account ${mint.toBase58()} still not visible to this RPC connection after ${mintWaitTimeoutMs}ms - this points to something more than ordinary propagation lag.`
+        `Mint account ${mint.toBase58()} still not finalized after ${mintWaitTimeoutMs}ms - this points to something more than ordinary propagation lag.`
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -212,7 +219,7 @@ async function main() {
       VAULT_ALLOCATION,
       DECIMALS,
       [],
-      { commitment: "confirmed" },
+      { commitment: "finalized" },
       TOKEN_2022_PROGRAM_ID
     );
     console.log(`  ${label} funded, tx:`, sig);
